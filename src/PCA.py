@@ -88,39 +88,34 @@ class PCA():
         self._spe = spe
         self._spe_limit = chi2.ppf(alpha, df)*const
         
-    def contributions(self):
         
-        P_t = self._loadings
-        E = self._residuals
-        X = self._X
-        T = self._scores
-        lam = self._eigenvals
-
-
-        spe_contribution = E**2
-
+    def spe_contribution(self):
+        
+        self._spe_contribution = self._residuals**2
+        
+    def T2_contribution(self):
+        
         '''
         El análisis de la contribución de la T2 se hace en dos fases. En la primera
         se obtiene la relación (t/lambda) 2, y se extrae la componente que devuelva el mayor valor.
         A continuación, se calcula la relación p_ak*x_ik, donde a es la componente seleccionada, k son las variables
         e i es la observación
         '''
-        T2_1 = (T/lam[None, :])**2
+    
+        T2_1 = (self._scores/self._eigenvals[None, :])**2
         components = np.argmax(T2_1, axis=1)
 
-        T2_2 = np.empty(shape=(X.shape[0], X.shape[1]))
+        T2_2 = np.empty(shape=(self._X.shape[0], self._X.shape[1]))
         
-        mean = np.mean(X, axis=0)
-        std = np.std(X, axis=0)
+        mean = np.mean(self._X, axis=0)
+        std = np.std(self._X, axis=0)
         for obs, a in enumerate(components):
-            p_a = P_t[a, :]
-            x_i = (X[obs, :] - mean)/std
+            p_a = self._loadings[a, :]
+            x_i = (self._X[obs, :] - mean)/std
             cont = p_a*x_i
             T2_2[obs, :] = cont
-
-        self._spe_contrib = spe_contribution
-        self._T2_contrib = T2_2
-
+            
+        self._T2_contribution = T2_2
 
             
     def etiquetas(self, df_metadata, variables):
