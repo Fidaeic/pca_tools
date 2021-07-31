@@ -11,40 +11,18 @@ from utils import nipals
 
 from sklearn.cluster import DBSCAN, OPTICS
 
-from nipals import PCA
-
 np.seterr(divide='ignore', invalid='ignore')
 
-class miPCA(PCA):
+class PCA():
     def __init__(self, X):
         
-        self._verbose = verbose
-        self._autoesc = autoesc
         self._nobs = X.shape[0]
         self._nvars = X.shape[1]
         self._X = X
-        
-        
-        self._residuals = None
-        self._loadings = None
-        self._scores = None
-        self._tagged_scores = None
-        self._tagged_loadings = None
-        self._plot = None
-        self._rsquare = None
-        self._explained_variance = None
-        self._eigenvals = None
-        self._hotelling = None
-        self._hotelling_limit = None
-        self._nvars = None
-        self._X = None
-        self._spe_contrib = None
-        self._T2_contrib = None
-        self._clusters_T_inertia = None
-        self._clusters_P_inertia = None
 
     def fit(self, X, ncomps, threshold=1e-12, demean=True, standardize=True, verbose=True, max_iterations=10000):
         
+        self._ncomps = ncomps
 
         self._scores, self._loadings, self._residuals, self._rsquare, self._eigenvals = \
             nipals(X, ncomps=ncomps, 
@@ -55,42 +33,39 @@ class miPCA(PCA):
                    max_iterations=max_iterations)
 
     
-    def cluster(self, n_clusters=5):
+    # def cluster(self, n_clusters=5):
         
-        T = self._scores
-        P = np.transpose(self._loadings)
+    #     T = self._scores
+    #     P = np.transpose(self._loadings)
 
-        clust_T = KMeans(n_clusters=n_clusters)
-        clust_T.fit(T)
+    #     clust_T = KMeans(n_clusters=n_clusters)
+    #     clust_T.fit(T)
         
-        clust_P = KMeans(n_clusters=n_clusters)
-        clust_P.fit(P)
+    #     clust_P = KMeans(n_clusters=n_clusters)
+    #     clust_P.fit(P)
         
-        self._clusters_scores = clust_T.labels_
-        self._clusters_loadings = clust_P.labels_
-        self._clusters_T_inertia = clust_T.inertia_
-        self._clusters_P_inertia = clust_P.inertia_
+    #     self._clusters_scores = clust_T.labels_
+    #     self._clusters_loadings = clust_P.labels_
+    #     self._clusters_T_inertia = clust_T.inertia_
+    #     self._clusters_P_inertia = clust_P.inertia_
+
     def hotelling(self, alpha):
         '''
         T2 de Hotelling según la fórmula T2 = suma(t_a**2/lambda_a), siendo lambda_a el autovalor de la columna
         a de la matriz de scores, y t_a el score de la observación i. El límite de control se obtiene 
         calculando la distribución Beta con A/2 y (m-A-1)/2 grados de libertad, siendo m el número de observaciones
         '''
-        T = self._scores
-        lam_a = self._eigenvals
-        obs = self._scores.shape[0]
-        A = self._ncomps
 
-        dfn = A/2
-        dfd = (obs-A-1)/2
-        const = ((obs-1)**2)/obs
+        dfn = self._ncomps/2
+        dfd = (self._nobs-self._ncomps-1)/2
+        const = ((self._nobs-1)**2)/self._nobs
 
         # Cálculo de la T2 de Hotelling
         T_2 = []
-        for i in range(T.shape[0]):
+        for i in range(self._scores.shape[0]):
             t2 = 0
-            z = T[i, :]
-            t2 = np.sum((z**2)/lam_a)
+            z = self._scores[i, :]
+            t2 = np.sum((z**2)/self._eigenvals)
             T_2.append(t2)
 
         lim_control = beta.ppf(alpha, dfn, dfd)*const
