@@ -49,7 +49,7 @@ class PCA():
     #     self._clusters_T_inertia = clust_T.inertia_
     #     self._clusters_P_inertia = clust_P.inertia_
 
-    def hotelling(self, alpha):
+    def hotelling_T2(self, alpha):
         '''
         T2 de Hotelling según la fórmula T2 = suma(t_a**2/lambda_a), siendo lambda_a el autovalor de la columna
         a de la matriz de scores, y t_a el score de la observación i. El límite de control se obtiene 
@@ -68,10 +68,25 @@ class PCA():
             t2 = np.sum((z**2)/self._eigenvals)
             T_2.append(t2)
 
-        lim_control = beta.ppf(alpha, dfn, dfd)*const
-
         self._hotelling = np.array(T_2)
-        self._hotelling_limit = lim_control
+        self._hotelling_limit = beta.ppf(alpha, dfn, dfd)*const
+        
+    def spe(self, alpha):
+        
+        spe = []
+        
+        for i in range(self._residuals.shape[0]):
+            e = self._residuals[i, :]
+            val = np.transpose(e).dot(e)
+            spe.append(val)
+
+        b, nu = np.mean(spe), np.var(spe)
+        
+        df = (2*b**2)/nu
+        const = nu/(2*b)
+
+        self._spe = spe
+        self._spe_limit = chi2.ppf(alpha, df)*const
         
     def contributions(self):
         
@@ -106,27 +121,7 @@ class PCA():
         self._spe_contrib = spe_contribution
         self._T2_contrib = T2_2
 
-    def spe(self, alpha):
-        E = self._residuals
-        
-        spe = []
-        
-        for i in range(E.shape[0]):
-            e = E[i, :]
-            val = np.transpose(e).dot(e)
-            spe.append(val)
 
-
-        b, nu = np.mean(spe), np.var(spe)
-        
-        df = (2*b**2)/nu
-        const = nu/(2*b)
-        
-        spe_lim = chi2.ppf(alpha, df)*const
-
-            
-        self._spe = spe
-        self._spe_limit = spe_lim
             
     def etiquetas(self, df_metadata, variables):
 
