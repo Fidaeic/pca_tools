@@ -7,6 +7,7 @@ from scipy.stats import beta, chi2
 from sklearn.cluster import KMeans
 from sklearn.neighbors import DistanceMetric
 
+from utils import nipals
 
 from sklearn.cluster import DBSCAN, OPTICS
 
@@ -15,10 +16,15 @@ from nipals import PCA
 np.seterr(divide='ignore', invalid='ignore')
 
 class miPCA(PCA):
-    def __init__(self, ncomps, autoesc=True, verbose=False):
-        self._ncomps = ncomps
+    def __init__(self, X):
+        
         self._verbose = verbose
         self._autoesc = autoesc
+        self._nobs = X.shape[0]
+        self._nvars = X.shape[1]
+        self._X = X
+        
+        
         self._residuals = None
         self._loadings = None
         self._scores = None
@@ -37,22 +43,17 @@ class miPCA(PCA):
         self._clusters_T_inertia = None
         self._clusters_P_inertia = None
 
-    def calcular(self, X):
+    def fit(self, X, ncomps, threshold=1e-12, demean=True, standardize=True, verbose=True, max_iterations=10000):
         
-        ncomps = self._ncomps
-        pca = PCA()
-        pca.nipals(X, ncomps=ncomps, tol=1e-2, autoesc=self._autoesc, verbose=self._verbose)
 
-        x = pca._rsquared_acc
+        self._scores, self._loadings, self._residuals, self._rsquare, self._eigenvals = \
+            nipals(X, ncomps=ncomps, 
+                   threshold=threshold, 
+                   demean=demean, 
+                   standardize=standardize, 
+                   verbose=verbose, 
+                   max_iterations=max_iterations)
 
-        self._explained_variance = np.array([x[0]]+[x[i]-x[i-1] for i in range(1, len(x))])
-        self._nvars = X.shape[1]
-        self._residuals = pca._residuals
-        self._loadings = pca._loadings
-        self._scores = pca._scores
-        self._rsquare = pca._rsquared_acc
-        self._eigenvals = pca._eigenvals
-        self._X = X
     
     def cluster(self, n_clusters=5):
         
