@@ -150,6 +150,26 @@ class PCA:
         self.fit(data)
         return self.transform(data)
 
+    def inverse_transform(self, data):
+        '''
+        Projects the data back to the original space
+
+        Parameters
+        ----------
+        data: array-like, shape (n_samples, n_components)
+            The data to be projected back to the original space
+
+        Returns
+        -------
+        array-like, shape (n_samples, n_features)
+            The projected data
+        '''
+
+        if isinstance(data, pd.DataFrame):
+            data = data.values
+
+        return data @ self._loadings
+    
     '''
     PLOTS
     '''
