@@ -170,6 +170,36 @@ class PCA:
 
         return data @ self._loadings
     
+    def hotelling_t2(self, alpha:float=0.95):
+        '''
+        Hotelling's T2 represents the estimated squared Mahalanobis distance from the center of the latent subspace
+        to the projection of an observation onto this subspace (Ferrer, 2014).
+        We calculate this statistic as T2 = sum(t_a**2/lambda_a), being lambda_a the eigenvalue of the ath component
+        and t_a the score of the ith observation in the ath component.
+        Under the assumption that the scores follow a multivariate normal distribution, it holds (Tracy, 1992), that in Phase I,
+        T2 follows a beta distribution with A/2 and (m-A-1)/2 degrees of freedom, being A the number of components
+        and m the number of observations
+
+        This statistic help us to detect outliers given that it is a measure of the distance between the centroid
+        of the subspace and an observation. Observations that are above the control limit might be considered extreme outliers
+
+        Parameters
+        ----------
+        alpha : float
+            Type I error. 1-alpha is the probability of rejecting a true null hypothesis.
+
+        Returns
+        -------
+        Hotelling's T2 statistic for every observation.
+        '''
+
+        dfn = self._ncomps/2
+        dfd = (self._nobs-self._ncomps-1)/2
+        const = ((self._nobs-1)**2)/self._nobs
+
+        self._hotelling = np.array([np.sum((self._scores[i, :]**2)/self._eigenvals) for i in range(self._nobs)])
+        self._hotelling_limit = beta.ppf(alpha, dfn, dfd)*const
+        
     '''
     PLOTS
     '''
