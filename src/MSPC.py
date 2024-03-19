@@ -36,6 +36,15 @@ class PCA:
     def fit(self, data):
         '''
         Fits the PCA model to the data
+
+        Parameters
+        ----------
+        data: array-like, shape (n_samples, n_features)
+            The data to be fitted
+
+        Returns
+        -------
+        None
         '''
 
         #Check if X_train is a pandas dataframe
@@ -105,7 +114,7 @@ class PCA:
 
         y: None
             This is only added so we can use this method within a scikit-learn pipeline
-            
+
         Returns
         -------
         array-like, shape (n_samples, n_components)
