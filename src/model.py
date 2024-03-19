@@ -6,17 +6,9 @@ author: Fidae El Morer
 """
 import numpy as np
 import pandas as pd
-import statsmodels.api as sm
 from numpy import linalg as LA
-from sklearn.model_selection import train_test_split
 from scipy.stats import f, beta, chi2
-import matplotlib.pyplot as plt
-import seaborn as sns
-sns.set_style(style="darkgrid")
-plt.ion()
-# import math
-# from matplotlib.patches import Ellipse
-#from bokeh.models import ColumnDataSource
+import altair as al
 
 class PCA:
     def __init__(self, ncomps, demean=True, descale=True, tolerance=1e-4, verbose=False):
@@ -96,8 +88,8 @@ class PCA:
             P_t[i] = p_t
 
         self._eigenvals = vals
-        self._loadings = P_t
-        self._scores = T.T
+        self._loadings = pd.DataFrame(P_t, columns=self._variables, index=[f"PC_{i}" for i in range(1, self._ncomps+1)])
+        self._scores = pd.DataFrame(T.T, columns=[f"PC_{i}" for i in range(1, self._ncomps+1)])
         self._rsquared_acc = np.array(r2)
         self._residuals_fit = data-T.T@P_t
         self._mean_train = data.mean()
@@ -128,8 +120,8 @@ class PCA:
             data -= self._mean_train
         if self._descale:
             data /= self._std_train
-
-        return data @ self._loadings.T
+        
+        return pd.DataFrame(data @ self._loadings.T, columns=self._scores.columns)
 
     def fit_transform(self, data, y=None):
         '''
@@ -200,384 +192,446 @@ class PCA:
         self._hotelling = np.array([np.sum((self._scores[i, :]**2)/self._eigenvals) for i in range(self._nobs)])
         self._hotelling_limit = beta.ppf(alpha, dfn, dfd)*const
         
+    def spe(self, alpha:float=0.95):
+        '''
+        Represents the sum of squared prediction errors. The value is given by the expression 
+        e^T_i * e_i, so the SPE statistic is the scalar product of the residuals vector of observation i
+        multiplied by its transposed self.
+        
+        The SPE statistic represents the squared Euclidean distance of an observation from the generated
+        subspace, and gives a measure of how close the observation is to the A-dimensional subspace.
+        
+        Observations that are above the control limit can be considered as moderate outliers.
+
+        Parameters
+        ----------
+        alpha : float
+            Type I error. 1-alpha is the probability of rejecting a true null hypothesis.
+        plot : bool, optional
+            If True, a plot of the Hotelling's T2 statistic and the control limit will be displayed. The default is True.
+
+        Returns
+        -------
+        SPE statistic for every observation.
+
+        '''
+        
+        SPE = np.array([self._residuals_fit[i, :].T@self._residuals_fit[i, :] for i in range(self._nobs)])
+
+        b, nu = np.mean(SPE), np.var(SPE)
+        
+        df = (2*b**2)/nu
+        const = nu/(2*b)
+
+        self._spe = SPE
+        self._spe_limit = chi2.ppf(alpha, df)*const
     '''
     PLOTS
     '''
-    
-    def scree_plot(self):
-        data = pd.DataFrame(self.eigenvals)
-        
-        data.index +=1
-        
-        
-        source = ColumnDataSource(data = dict(
-            x = data.index.values,
-            y= data.values))
-        
-        tooltips = [("Component number", "@x"),
-                          ("Eigenvalue", "@y")]
-        
-        p = figure(title='Scree plot', plot_width=800, plot_height=400, x_axis_label = "Number of components", y_axis_label="Eigenvalues", tooltips=tooltips)
-        p.line(x=data.index, y=data[0])
-        
-        p.line(x = data.index, y =1, color='red')
-        output_file("Scree_plot.html")
-        show(p)
-        
-    def explain_plot(self):
-        
-        data = pd.DataFrame(self.rsquared_acc*100, columns = ["rsquared"])
-        data.index+=1
+    def score_plot(self, comp1:int, comp2:int):
+        '''
+        Generates a score plot of the selected components
 
+        Parameters
+        ----------
+        comp1 : int
+            The number of the first component.
+        comp2 : int
+            The number of the second component.
 
-        source = ColumnDataSource(data=dict(
-            x  = data.index.values,
-            value =data.values,
-            ))
-        
-        tooltips = [("Component number", "@x"),
-                    ("Accumulated explained variance", "@value")]
-        
-        p = figure(title="Explained variance", plot_width=800, plot_height=400, x_axis_label = "Number of components", y_axis_label="Accumulated explained variance", tooltips=tooltips)
-        p.vbar(x = data.index.values, top = data['rsquared'], width=0.8)
-        output_file("Explain_plot.html")
-        show(p)
-        
-    def score_plot(self, comp1, comp2):
+        Returns
+        -------
+        None
+        '''
         if comp1 <= 0 or comp2 <= 0:
             raise ValueError("The number of components must be greather than 0")
 
-        meta = self.metadata.copy()
-        T = self.scores.copy()
-        
-        data = pd.DataFrame({comp1: T[:, comp1-1],
-                             comp2: T[:, comp2-1]})
+        scores = self._scores.copy()
+        if self._scores.shape[0]>5000:
+            mask = np.random.choice(self._scores.shape[0], 5000, replace=False)
+            scores = self._scores.iloc[mask]
 
-        source = ColumnDataSource(data=dict(
-            x=T[:, comp1-1],
-            y=T[:, comp2-1],
-            pais=list(meta['PAÍS'].values),
-            muni=list(meta['MUNICIPIO'].values)))
+        return al.Chart(scores).mark_circle().encode(
+            x=f"PC_{comp1}",
+            y=f"PC_{comp2}",
+            tooltip=[f"PC_{comp1}", f"PC_{comp2}"]
+        ).interactive()
 
-        tooltips = [
-                    ("Observation", "$index"),
-                    ("Pais", "@pais"),
-                    ("Municipio", "@muni"),
-                    ("(x,y)", "($x, $y)")
-        ]
-        
-        p1 = figure(title=f"Gráfico de scores de las componentes {comp1} y {comp2}",x_axis_label=f"Componente {comp1}", y_axis_label=f"Componente {comp2}", plot_width=800, plot_height=400, tooltips=tooltips)
-        p1.circle(source=source, x='x', y='y', size=5, color="navy", alpha=0.5)
 
-        output_file(f"Score_plot_comps_{comp1}-{comp2}.html")
-        show(p1)
+    # def scree_plot(self):
+    #     data = pd.DataFrame(self.eigenvals)
+        
+    #     data.index +=1
+        
+        
+    #     source = ColumnDataSource(data = dict(
+    #         x = data.index.values,
+    #         y= data.values))
+        
+    #     tooltips = [("Component number", "@x"),
+    #                       ("Eigenvalue", "@y")]
+        
+    #     p = figure(title='Scree plot', plot_width=800, plot_height=400, x_axis_label = "Number of components", y_axis_label="Eigenvalues", tooltips=tooltips)
+    #     p.line(x=data.index, y=data[0])
+        
+    #     p.line(x = data.index, y =1, color='red')
+    #     output_file("Scree_plot.html")
+    #     show(p)
+        
+    # def explain_plot(self):
+        
+    #     data = pd.DataFrame(self.rsquared_acc*100, columns = ["rsquared"])
+    #     data.index+=1
 
-    def loadings_plot(self, comp):
-        if comp <= 0:
-            raise ValueError("The number of components must be greather than 0")
-        
-        P_t = self.loadings
-        variables = self.variables.copy()
-        
-        data = pd.DataFrame({comp: P_t[comp-1,:]})
-        
-        source = ColumnDataSource(data=dict(
-            x = range(P_t.shape[1]),
-            valor=P_t[comp-1,:],
-            variables = list(variables)))
-        
-        tooltips = [("Variable", "$index"),
-                    ("Nombre de la variable", "@variables"),
-                    ("Peso", "@valor")
-                    ]
-        
-        p = figure(title=f"Gráfico de peso de las variables en la componente {comp}",x_axis_label=f"Variables", y_axis_label=f"Peso de las variables en la componente {comp}",plot_width=800, plot_height=400, tooltips = tooltips)
 
-        p.vbar(source=source, x='x', top = 'valor', width=0.8)
-            #x = range(P_t.shape[1]), top = data[comp], width=0.8)
-        output_file(f"Loadings_plot_{comp}.html")
-        show(p)
+    #     source = ColumnDataSource(data=dict(
+    #         x  = data.index.values,
+    #         value =data.values,
+    #         ))
+        
+    #     tooltips = [("Component number", "@x"),
+    #                 ("Accumulated explained variance", "@value")]
+        
+    #     p = figure(title="Explained variance", plot_width=800, plot_height=400, x_axis_label = "Number of components", y_axis_label="Accumulated explained variance", tooltips=tooltips)
+    #     p.vbar(x = data.index.values, top = data['rsquared'], width=0.8)
+    #     output_file("Explain_plot.html")
+    #     show(p)
+        
+    # def score_plot(self, comp1, comp2):
+    #     if comp1 <= 0 or comp2 <= 0:
+    #         raise ValueError("The number of components must be greather than 0")
+
+    #     meta = self.metadata.copy()
+    #     T = self.scores.copy()
+        
+    #     data = pd.DataFrame({comp1: T[:, comp1-1],
+    #                          comp2: T[:, comp2-1]})
+
+    #     source = ColumnDataSource(data=dict(
+    #         x=T[:, comp1-1],
+    #         y=T[:, comp2-1],
+    #         pais=list(meta['PAÍS'].values),
+    #         muni=list(meta['MUNICIPIO'].values)))
+
+    #     tooltips = [
+    #                 ("Observation", "$index"),
+    #                 ("Pais", "@pais"),
+    #                 ("Municipio", "@muni"),
+    #                 ("(x,y)", "($x, $y)")
+    #     ]
+        
+    #     p1 = figure(title=f"Gráfico de scores de las componentes {comp1} y {comp2}",x_axis_label=f"Componente {comp1}", y_axis_label=f"Componente {comp2}", plot_width=800, plot_height=400, tooltips=tooltips)
+    #     p1.circle(source=source, x='x', y='y', size=5, color="navy", alpha=0.5)
+
+    #     output_file(f"Score_plot_comps_{comp1}-{comp2}.html")
+    #     show(p1)
+
+    # def loadings_plot(self, comp):
+    #     if comp <= 0:
+    #         raise ValueError("The number of components must be greather than 0")
+        
+    #     P_t = self.loadings
+    #     variables = self.variables.copy()
+        
+    #     data = pd.DataFrame({comp: P_t[comp-1,:]})
+        
+    #     source = ColumnDataSource(data=dict(
+    #         x = range(P_t.shape[1]),
+    #         valor=P_t[comp-1,:],
+    #         variables = list(variables)))
+        
+    #     tooltips = [("Variable", "$index"),
+    #                 ("Nombre de la variable", "@variables"),
+    #                 ("Peso", "@valor")
+    #                 ]
+        
+    #     p = figure(title=f"Gráfico de peso de las variables en la componente {comp}",x_axis_label=f"Variables", y_axis_label=f"Peso de las variables en la componente {comp}",plot_width=800, plot_height=400, tooltips = tooltips)
+
+    #     p.vbar(source=source, x='x', top = 'valor', width=0.8)
+    #         #x = range(P_t.shape[1]), top = data[comp], width=0.8)
+    #     output_file(f"Loadings_plot_{comp}.html")
+    #     show(p)
         
         
-    def compare_loadings(self, comp1, comp2):
-        if comp1 <= 0 or comp2 <= 0:
-            raise ValueError("The number of components must be greather than 0")
+    # def compare_loadings(self, comp1, comp2):
+    #     if comp1 <= 0 or comp2 <= 0:
+    #         raise ValueError("The number of components must be greather than 0")
             
-        P_t = self.loadings
-        var = self.variables.copy()
+    #     P_t = self.loadings
+    #     var = self.variables.copy()
         
-        data = pd.DataFrame({comp1: P_t[comp1-1,:], 
-                             comp2: P_t[comp2-1,:]})
+    #     data = pd.DataFrame({comp1: P_t[comp1-1,:], 
+    #                          comp2: P_t[comp2-1,:]})
         
-        source = ColumnDataSource(data=dict(
-            x=P_t[comp1-1, :],
-            y=P_t[comp2-1, :],
-            variable=list(var)))
+    #     source = ColumnDataSource(data=dict(
+    #         x=P_t[comp1-1, :],
+    #         y=P_t[comp2-1, :],
+    #         variable=list(var)))
         
-        tooltips = [("Observation", "$index"),
-                    ("Variable", "@variable"),
-                          ("(x,y)", "($x, $y)")]
+    #     tooltips = [("Observation", "$index"),
+    #                 ("Variable", "@variable"),
+    #                       ("(x,y)", "($x, $y)")]
         
-        p1 = figure(title=f"Gráfico de loadings de las componentes {comp1} y {comp2}",x_axis_label=f"Componente {comp1}", y_axis_label=f"Componente {comp2}", plot_width=800, plot_height=400, tooltips = tooltips)
-        p1.circle(source=source, x='x', y='y', size=5, color="navy", alpha=0.5)
+    #     p1 = figure(title=f"Gráfico de loadings de las componentes {comp1} y {comp2}",x_axis_label=f"Componente {comp1}", y_axis_label=f"Componente {comp2}", plot_width=800, plot_height=400, tooltips = tooltips)
+    #     p1.circle(source=source, x='x', y='y', size=5, color="navy", alpha=0.5)
 
-        output_file(f"Loadings_plot_comps_{comp1}-{comp2}.html")
-        show(p1)
+    #     output_file(f"Loadings_plot_comps_{comp1}-{comp2}.html")
+    #     show(p1)
 
-    def contribution_plot_SPE_p1(self, ncomps, X, obs):
+    # def contribution_plot_SPE_p1(self, ncomps, X, obs):
 
-        if ncomps<=0:
-            raise ValueError("The number of components must be greather than 0")
+    #     if ncomps<=0:
+    #         raise ValueError("The number of components must be greather than 0")
             
-        T = self.scores[:,:ncomps]
-        P_t = self.loadings[:ncomps,:]
+    #     T = self.scores[:,:ncomps]
+    #     P_t = self.loadings[:ncomps,:]
                
-        E = X-T.dot(P_t)
+    #     E = X-T.dot(P_t)
         
-        contrib = E[obs]**2
+    #     contrib = E[obs]**2
         
-        tooltips = [("Variable", "$index"),
-                          ("(x,y)", "($x, $y)")]
+    #     tooltips = [("Variable", "$index"),
+    #                       ("(x,y)", "($x, $y)")]
         
-        p = figure(title = f"Gráfico de contribución para la observación {obs}", plot_width=800, plot_height=400, tooltips=tooltips)
-        p.vbar(x = range(E.shape[1]), top = contrib, width=0.8)
-        output_file(f"Loadings_plot_ncomps-{ncomps}_obs-{obs}.html")
-        show(p)
+    #     p = figure(title = f"Gráfico de contribución para la observación {obs}", plot_width=800, plot_height=400, tooltips=tooltips)
+    #     p.vbar(x = range(E.shape[1]), top = contrib, width=0.8)
+    #     output_file(f"Loadings_plot_ncomps-{ncomps}_obs-{obs}.html")
+    #     show(p)
         
-    def contribution_plot_SPE_p2(self, obs):
+    # def contribution_plot_SPE_p2(self, obs):
 
 
-        E = self.residuals_pred
+    #     E = self.residuals_pred
         
-        contrib = E[obs]**2
+    #     contrib = E[obs]**2
         
-        tooltips = [("Variable", "$index"),
-                          ("(x,y)", "($x, $y)")]
+    #     tooltips = [("Variable", "$index"),
+    #                       ("(x,y)", "($x, $y)")]
         
-        p = figure(title = f"Contribution plot for observation {obs}", plot_width=800, plot_height=400, tooltips=tooltips)
-        p.vbar(x = range(E.shape[1]), top = contrib, width=0.8)
-        show(p)
+    #     p = figure(title = f"Contribution plot for observation {obs}", plot_width=800, plot_height=400, tooltips=tooltips)
+    #     p.vbar(x = range(E.shape[1]), top = contrib, width=0.8)
+    #     show(p)
         
-    def tau_plot_T2_p1(self, obs):
+    # def tau_plot_T2_p1(self, obs):
 
-        T = self.scores
+    #     T = self.scores
         
-        lam = [np.var(T[:,i]) for i in range(T.shape[1])]
+    #     lam = [np.var(T[:,i]) for i in range(T.shape[1])]
         
-        contrib = [(T[obs,i]/lam[i])**2 for i in range(T.shape[1])]
+    #     contrib = [(T[obs,i]/lam[i])**2 for i in range(T.shape[1])]
         
-        tooltips = [("Variable", "$index"),
-                          ("(x,y)", "($x, $y)")]
+    #     tooltips = [("Variable", "$index"),
+    #                       ("(x,y)", "($x, $y)")]
         
-        p = figure(title = f"Score plot for observation {obs}", plot_width=800, plot_height=400, tooltips=tooltips)
-        p.vbar(x = range(T.shape[1]), top = contrib, width=0.8)
-        show(p)
+    #     p = figure(title = f"Score plot for observation {obs}", plot_width=800, plot_height=400, tooltips=tooltips)
+    #     p.vbar(x = range(T.shape[1]), top = contrib, width=0.8)
+    #     show(p)
         
-    def tau_plot_T2_p2(self, obs):
+    # def tau_plot_T2_p2(self, obs):
 
-        tau = self.tau
+    #     tau = self.tau
         
-        lam = [np.var(tau[:,i]) for i in range(tau.shape[1])]
+    #     lam = [np.var(tau[:,i]) for i in range(tau.shape[1])]
         
-        contrib = [(tau[obs,i]/lam[i])**2 for i in range(tau.shape[1])]
+    #     contrib = [(tau[obs,i]/lam[i])**2 for i in range(tau.shape[1])]
 
-        tooltips = [("Variable", "$index"),
-                          ("(x,y)", "($x, $y)")]
+    #     tooltips = [("Variable", "$index"),
+    #                       ("(x,y)", "($x, $y)")]
         
-        p = figure(title = f"Score plot for observation {obs}", plot_width=800, plot_height=400, tooltips=tooltips)
-        p.vbar(x = range(tau.shape[1]), top = contrib, width=0.8)
-        show(p)
+    #     p = figure(title = f"Score plot for observation {obs}", plot_width=800, plot_height=400, tooltips=tooltips)
+    #     p.vbar(x = range(tau.shape[1]), top = contrib, width=0.8)
+    #     show(p)
         
-    def contribution_plot_T2(self, comp, X, obs):
+    # def contribution_plot_T2(self, comp, X, obs):
 
-        if comp <=0:
-            raise ValueError("The number of components must be greather than 0")
+    #     if comp <=0:
+    #         raise ValueError("The number of components must be greather than 0")
         
-        P_t = self.loadings
-        contrib = (P_t[comp-1, :]*X[obs,:]).reshape((X.shape[1]))
+    #     P_t = self.loadings
+    #     contrib = (P_t[comp-1, :]*X[obs,:]).reshape((X.shape[1]))
         
-        tooltips = [("Variable", "$index"),
-                          ("(x,y)", "($x, $y)")]
+    #     tooltips = [("Variable", "$index"),
+    #                       ("(x,y)", "($x, $y)")]
         
-        p = figure(title = f"Contribution plot for observation {obs} and component {comp}", plot_width=800, plot_height=400, tooltips=tooltips)
-        p.vbar(x = range(P_t.shape[1]), top = contrib, width=0.8)
-        show(p)
+    #     p = figure(title = f"Contribution plot for observation {obs} and component {comp}", plot_width=800, plot_height=400, tooltips=tooltips)
+    #     p.vbar(x = range(P_t.shape[1]), top = contrib, width=0.8)
+    #     show(p)
         
         
-    def tau_plot(self, obs, ncomps):
+    # def tau_plot(self, obs, ncomps):
 
-        tau = self.tau
+    #     tau = self.tau
         
         
-        p = figure(title = f"Tau plot for observation {obs}", plot_width=800, plot_height=400)
-        p.vbar(x = range(1,ncomps+1), top = tau[obs], width=0.8)
+    #     p = figure(title = f"Tau plot for observation {obs}", plot_width=800, plot_height=400)
+    #     p.vbar(x = range(1,ncomps+1), top = tau[obs], width=0.8)
         
-        show(p)
+    #     show(p)
     
-    def T2_plot_p1(self, ncomps, alpha):
+    # def T2_plot_p1(self, ncomps, alpha):
 
-        if ncomps <=1:
-            raise ValueError("The number of components must be greather than 1")
+    #     if ncomps <=1:
+    #         raise ValueError("The number of components must be greather than 1")
         
-        if ncomps > self._ncomps:
-            raise ValueError("The number of components of the plot can't be greater than the number of components of the model")
+    #     if ncomps > self._ncomps:
+    #         raise ValueError("The number of components of the plot can't be greater than the number of components of the model")
         
         
-        obs = self._nobs
-        T = self.scores[:,:ncomps]
-        X_train = self.X_train
+    #     obs = self._nobs
+    #     T = self.scores[:,:ncomps]
+    #     X_train = self.X_train
         
-        tau = np.array([np.sum(((T[i])**2)/np.var(T[i])) for i in range(obs)])
+    #     tau = np.array([np.sum(((T[i])**2)/np.var(T[i])) for i in range(obs)])
     
         
-        source=ColumnDataSource(data=dict(
-            x=range(0,X_train.shape[0]),
-            y=tau,
-            a = X_train[:,-4],
-            dm = X_train[:, -3],
-            m = X_train[:, -2],
-            year = X_train[:,-1]))
+    #     source=ColumnDataSource(data=dict(
+    #         x=range(0,X_train.shape[0]),
+    #         y=tau,
+    #         a = X_train[:,-4],
+    #         dm = X_train[:, -3],
+    #         m = X_train[:, -2],
+    #         year = X_train[:,-1]))
         
-        dfn = ncomps/2
-        dfd = (obs-ncomps-1)/2
-        const = ((obs-1)**2)/obs
+    #     dfn = ncomps/2
+    #     dfd = (obs-ncomps-1)/2
+    #     const = ((obs-1)**2)/obs
         
         
-        tooltips = [("Observation", "@x"),
-                    ("T2 value", "@y"),
-                    ("Week day", "@a"),
-                    ("Day of month", "@dm"),
-                    ("Month", "@m"),
-                    ("Year", "@year")]
+    #     tooltips = [("Observation", "@x"),
+    #                 ("T2 value", "@y"),
+    #                 ("Week day", "@a"),
+    #                 ("Day of month", "@dm"),
+    #                 ("Month", "@m"),
+    #                 ("Year", "@year")]
 
                
-        p = figure(title = f"Hotelling's T2 plot for {ncomps} components (Phase I)",plot_width=800, plot_height=400, tooltips=tooltips)
-        p.line(x= "x", y="y", source=source)
-        p.line(x = "x", y= (beta.ppf(alpha, dfn, dfd))*const, source=source, line_color = 'red')
-        show(p)
+    #     p = figure(title = f"Hotelling's T2 plot for {ncomps} components (Phase I)",plot_width=800, plot_height=400, tooltips=tooltips)
+    #     p.line(x= "x", y="y", source=source)
+    #     p.line(x = "x", y= (beta.ppf(alpha, dfn, dfd))*const, source=source, line_color = 'red')
+    #     show(p)
         
-    def SPE_plot_p1(self, ncomps, alpha):
+    # def SPE_plot_p1(self, ncomps, alpha):
 
-        if ncomps <=0:
-            raise ValueError("The number of components must be greather than 0")
+    #     if ncomps <=0:
+    #         raise ValueError("The number of components must be greather than 0")
             
-        if ncomps > self._ncomps:
-            raise ValueError("The number of components of the plot can't be greater than the number of components of the model")
+    #     if ncomps > self._ncomps:
+    #         raise ValueError("The number of components of the plot can't be greater than the number of components of the model")
         
-        X = self.X_train
-        T = self.scores[:,:ncomps]
-        P_t = self.loadings[:ncomps,:]
+    #     X = self.X_train
+    #     T = self.scores[:,:ncomps]
+    #     P_t = self.loadings[:ncomps,:]
                
-        E = X-T.dot(P_t)
+    #     E = X-T.dot(P_t)
         
-        spe = np.array([np.transpose(E[i,:]).dot(E[i,:]) for i in range(E.shape[0])])
+    #     spe = np.array([np.transpose(E[i,:]).dot(E[i,:]) for i in range(E.shape[0])])
         
-        source=ColumnDataSource(data=dict(
-            x=range(0,X.shape[0]),
-            y=spe,
-            a = X[:,-4],
-            dm = X[:, -3],
-            m = X[:, -2],
-            year = X[:,-1]))
+    #     source=ColumnDataSource(data=dict(
+    #         x=range(0,X.shape[0]),
+    #         y=spe,
+    #         a = X[:,-4],
+    #         dm = X[:, -3],
+    #         m = X[:, -2],
+    #         year = X[:,-1]))
         
-        tooltips = [("Observation", "@x"),
-                    ("SPE value", "@y"),
-                    ("Week day", "@a"),
-                    ("Day of month", "@dm"),
-                    ("Month", "@m"),
-                    ("Year", "@year")]
+    #     tooltips = [("Observation", "@x"),
+    #                 ("SPE value", "@y"),
+    #                 ("Week day", "@a"),
+    #                 ("Day of month", "@dm"),
+    #                 ("Month", "@m"),
+    #                 ("Year", "@year")]
         
-        #Calculation of UCL for SPE
-        beta = np.mean(spe)
-        nu = np.var(spe)
+    #     #Calculation of UCL for SPE
+    #     beta = np.mean(spe)
+    #     nu = np.var(spe)
         
-        ucl_alpha = nu/(2*beta)*chi2.ppf(alpha, (2*beta**2)/nu)
+    #     ucl_alpha = nu/(2*beta)*chi2.ppf(alpha, (2*beta**2)/nu)
         
-        p = figure(title = f"SPE plot for {ncomps} components (Phase I)", plot_width=800, plot_height=400, tooltips=tooltips)
+    #     p = figure(title = f"SPE plot for {ncomps} components (Phase I)", plot_width=800, plot_height=400, tooltips=tooltips)
         
-        p.line(x= "x", y="y", source=source)
+    #     p.line(x= "x", y="y", source=source)
         
-        p.line(x = "x", y= ucl_alpha,source=source, line_color = 'red')
-        show(p)
+    #     p.line(x = "x", y= ucl_alpha,source=source, line_color = 'red')
+    #     show(p)
         
 
-    def T2_plot_p2(self, ncomps, alpha):
+    # def T2_plot_p2(self, ncomps, alpha):
 
-        if ncomps > self._ncomps:
-            raise ValueError("The number of components of the plot can't be greater than the number of components of the model")
+    #     if ncomps > self._ncomps:
+    #         raise ValueError("The number of components of the plot can't be greater than the number of components of the model")
         
-        obs = self._nobs
-        dfn = ncomps
-        dfd = obs-ncomps
-        const = (((obs**2)-1)*ncomps)/(obs*(obs-ncomps))
-        T = self.scores
-        X = self.X_test
+    #     obs = self._nobs
+    #     dfn = ncomps
+    #     dfd = obs-ncomps
+    #     const = (((obs**2)-1)*ncomps)/(obs*(obs-ncomps))
+    #     T = self.scores
+    #     X = self.X_test
         
         
-        source=ColumnDataSource(data=dict(
-            x=range(0,X.shape[0]),
-            y=self.t2,
-            a = X[:,-4],
-            dm = X[:, -3],
-            m = X[:, -2],
-            year = X[:,-1]))
+    #     source=ColumnDataSource(data=dict(
+    #         x=range(0,X.shape[0]),
+    #         y=self.t2,
+    #         a = X[:,-4],
+    #         dm = X[:, -3],
+    #         m = X[:, -2],
+    #         year = X[:,-1]))
         
-        tooltips = [("Observation", "@x"),
-                    ("T2 value", "@y"),
-                    ("Week day", "@a"),
-                    ("Day of month", "@dm"),
-                    ("Month", "@m"),
-                    ("Year", "@year")]
+    #     tooltips = [("Observation", "@x"),
+    #                 ("T2 value", "@y"),
+    #                 ("Week day", "@a"),
+    #                 ("Day of month", "@dm"),
+    #                 ("Month", "@m"),
+    #                 ("Year", "@year")]
         
-        p = figure(title = f"T2 plot for {ncomps} components (Phase II)", plot_width=800, plot_height=400, tooltips=tooltips)
-        p.line(x= "x", y="y", source=source)
+    #     p = figure(title = f"T2 plot for {ncomps} components (Phase II)", plot_width=800, plot_height=400, tooltips=tooltips)
+    #     p.line(x= "x", y="y", source=source)
 
-        p.line(x = "x", y= (f.ppf(alpha, dfn, dfd))*const, source=source, line_color = 'red')
-        show(p)
+    #     p.line(x = "x", y= (f.ppf(alpha, dfn, dfd))*const, source=source, line_color = 'red')
+    #     show(p)
         
-    def SPE_plot_p2(self, ncomps, alpha):
+    # def SPE_plot_p2(self, ncomps, alpha):
 
-        if ncomps <=0:
-            raise ValueError("The number of components must be greather than 0")
+    #     if ncomps <=0:
+    #         raise ValueError("The number of components must be greather than 0")
             
-        if ncomps > self._ncomps:
-            raise ValueError("The number of components of the plot can't be greater than the number of components of the model")
+    #     if ncomps > self._ncomps:
+    #         raise ValueError("The number of components of the plot can't be greater than the number of components of the model")
         
-        X= self.X_test
+    #     X= self.X_test
         
-        source=ColumnDataSource(data=dict(
-            x=range(0,X.shape[0]),
-            y=self.SPE,
-            a = X[:,-4],
-            dm = X[:, -3],
-            m = X[:, -2],
-            year = X[:,-1]))
+    #     source=ColumnDataSource(data=dict(
+    #         x=range(0,X.shape[0]),
+    #         y=self.SPE,
+    #         a = X[:,-4],
+    #         dm = X[:, -3],
+    #         m = X[:, -2],
+    #         year = X[:,-1]))
         
-        #Calculation of UCL for 
-        n = X.shape[0]
-        k = X.shape[1]
-        a=ncomps
-        c=1
+    #     #Calculation of UCL for 
+    #     n = X.shape[0]
+    #     k = X.shape[1]
+    #     a=ncomps
+    #     c=1
         
-        E =self.residuals_pred
+    #     E =self.residuals_pred
         
-        s_0 = np.sqrt(np.sum(E**2)/((n-a-1)*(k-a)))
+    #     s_0 = np.sqrt(np.sum(E**2)/((n-a-1)*(k-a)))
         
-        ucl_alpha = (((k-a)/c)*s_0**2)*f.ppf(alpha, k-a, (n-a-1)*(k-a))
+    #     ucl_alpha = (((k-a)/c)*s_0**2)*f.ppf(alpha, k-a, (n-a-1)*(k-a))
         
-        tooltips = [("Observation", "@x"),
-                    ("SPE value", "@y"),
-                    ("Week day", "@a"),
-                    ("Day of month", "@dm"),
-                    ("Month", "@m"),
-                    ("Year", "@year")]
+    #     tooltips = [("Observation", "@x"),
+    #                 ("SPE value", "@y"),
+    #                 ("Week day", "@a"),
+    #                 ("Day of month", "@dm"),
+    #                 ("Month", "@m"),
+    #                 ("Year", "@year")]
         
-        p = figure(title = f"SPE plot for {ncomps} components (Phase II)", plot_width=800, plot_height=400, tooltips=tooltips)
+    #     p = figure(title = f"SPE plot for {ncomps} components (Phase II)", plot_width=800, plot_height=400, tooltips=tooltips)
         
-        p.line(x= "x", y="y", source=source)
+    #     p.line(x= "x", y="y", source=source)
         
-        p.line(x = "x", y= ucl_alpha,source=source, line_color = 'red')
-        show(p)
+    #     p.line(x = "x", y= ucl_alpha,source=source, line_color = 'red')
+    #     show(p)
         
         
 # class PCR(PCA):
