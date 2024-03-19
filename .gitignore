@@ -8,6 +8,9 @@ src/__pycache__/
 # C extensions
 *.so
 
+# Other scripts
+testing_script.py
+
 # Distribution / packaging
 .Python
 build/

@@ -2,9 +2,8 @@
 """
 Created on Mon Apr 20 15:33:50 2020
 
-@author: Fidae El Morer
+author: Fidae El Morer
 """
-
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
@@ -15,162 +14,132 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 sns.set_style(style="darkgrid")
 plt.ion()
-import math
-from matplotlib.patches import Ellipse
-
-from bokeh.io import output_file, reset_output
-from bokeh.plotting import figure, show, ColumnDataSource, figure, output_file, show
+# import math
+# from matplotlib.patches import Ellipse
 #from bokeh.models import ColumnDataSource
-from bokeh.layouts import row, column, gridplot
-from bokeh.models.widgets import Tabs, Panel
-from bokeh.models import HoverTool
 
-reset_output()
-
-
-class PCA(object):
-    def __init__(self, df_metadatos, variables, autoescalado = True, tolerancia = 1e-15, verbose = False):
-
-        self.verbose = verbose
-        self._autoesc = autoescalado
-        self._tolerancia = tolerancia
-        self.metadata = df_metadatos
-        self.variables = variables
-
-        if not 0 < self._tolerancia < 1:
+class PCA:
+    def __init__(self, ncomps, demean=True, descale=True, tolerance=1e-4, verbose=False):
+        
+        if not 0 < tolerance < 1:
             raise ValueError('Tolerance must be strictly between 0 and 1')
-            
-        self._nobs = None
-        self._nvars = None    
-        self.eigenvals = None
-        self.loadings = None
-        self.scores = None
-        self.rsquare = None
-        self.residuals = None
-        self.spe = None
-        self.t2 = None
-        self._ncomps = None
-        self.X_train = None
-        self.X_test = None
-        self.X_opt = None
-        self.tau = None
-        self.residuals_fit = None
-        self.residuals_pred = None
-        self.mean_train = None
-        self.std_train = None
-
-            
-    def fit(self, X_train, ncomps):
         
+        if ncomps <= 0:
+            raise ValueError('The number of components must be strictly positive')
+
         self._ncomps = ncomps
-        self._nobs, self._nvars = X_train.shape
-        self.X_train = X_train
-        X_original = X_train
-        X = X_train
-        mean_train=np.zeros((1, X.shape[1]))
-        std_train=np.zeros((1, X.shape[1]))
-        for i in range(X.shape[1]):
-            mean_train[:,i] = np.mean(X[:,i])
-            std_train[:,i] = np.std(X[:,i])
+        self._demean = demean
+        self._descale = descale
+        self._tolerance = tolerance
+        self.verbose = verbose
             
-        if self._autoesc==True:
-            for i in range(X.shape[1]):
-                X[:,i]= X[:,i]-np.mean(X[:,i])
-                X[:,i]= X[:,i]/np.std(X[:,i])
-        
-        r2 = []
-        T = np.zeros(shape=(self._ncomps, X.shape[0]))
-        P_t = np.zeros(shape = (self._ncomps, X.shape[1]))
-        vals= np.zeros(self._ncomps)
-        dif = self._tolerancia
-        
-        for i in range(self._ncomps):
-            #Iniciamos t como la primera columna de X  
-            t = np.array(X[:,0])
-            t.shape=(X.shape[0], 1) #Esto sirve para obligar a que t sea un vector columna
-            
-            #Inicializamos un contador para saber en cuántas iteraciones converge el algoritmo y un criterio de parada
-            cont=0
-            conv=0
-                        
-            while conv <X.shape[0]:
-                
-                #Definimos un vector llamado t_previo, que es con el que vamos a empezar el algoritmo
-                t_previo = t
-                p_t = (np.transpose(t_previo).dot(X))/(np.transpose(t_previo).dot(t_previo))
-                p_t = p_t/LA.norm(p_t)
-                
-                t=X.dot(np.transpose(p_t))
-                
-                #Comparamos el t calcular con el t_previo, de manera que lo que buscamos es que la diferencia sea menor
-                #que el criterio de parada establecido. Para ello, hacemos una prueba lógica y sumamos todos los valores
-                #donde sea verdad. Si es verdad en todos, el algoritmo ha convergido
-                conv = np.sum((t-t_previo)<dif)
-                cont+=1
-            if self.verbose == True:
-                print("Componente ", i+1, " converge en ", cont, " iteraciones")
-                
-            #Calculamos la matriz de residuos y se la asignamos a X para calcular la siguiente componente
-            E = X-t.dot(p_t)
-            r2.append(1-np.sum(E**2)/np.sum(X_original**2))
-            X=E
-            
-            #Asignamos los vectores t y p a su posición en las matrices de scores y loadings
-            vals[i] = np.var(t)
-            
-            T[i]=t.reshape((X.shape[0]))
-            P_t[i]=p_t
-        T = np.transpose(T)
+    def fit(self, data):
+        '''
+        Fits the PCA model to the data
+        '''
 
-        self.eigenvals = vals
-        self.loadings = P_t
-        self.scores = T
-        self.rsquared_acc = np.array(r2)
-        self.residuals_fit = X_original-T.dot(P_t)
-        self.mean_train = mean_train
-        self.std_train = std_train
-                
-    def predict(self, X_test, ncomps):
+        #Check if X_train is a pandas dataframe
+        if isinstance(data, pd.DataFrame):
+            self._variables = data.columns
+            data = data.values
+        else:
+            self._variables = [f"X{i}" for i in range(data.shape[1])]
         
-        mean_train = self.mean_train
-        std_train = self.std_train
-        
-        self.X_test = X_test
-        X_test = X_test
-        
-        for i in range(X_test.shape[1]):
-            X_test[:,i]= X_test[:,i]-np.mean(X_test[:,i])
-            X_test[:,i]= X_test[:,i]/np.std(X_test[:,i])
-        
-        if ncomps > self._ncomps:
-            raise ValueError("The number of components of the plot can't be greater than the number of components of the model")
-        
-        nvars = X_test.shape[1]
-        P_t = self.loadings[:ncomps, :]
-        T = X_test.dot(np.transpose(P_t))
-        
-        tau = []
-        t2 = []
-        SPE = []
-        
-        thita = np.cov(T, rowvar=False)
-        
-        for i in range(X_test.shape[0]):
-            z = X_test[i,:]
+        self._nobs, self._nvars = data.shape
+        X = data.copy()
+
+        # Descale and demean matrix
+        if self._demean:
+            X -= np.mean(X, axis=0)
+        if self._descale:
+            X /= np.std(X, axis=0)
+
+        r2 = []
+        T = np.zeros((self._ncomps, X.shape[0]))
+        P_t = np.zeros((self._ncomps, X.shape[1]))
+        vals = np.zeros(self._ncomps)
+
+        for i in range(self._ncomps):
+            # Initialize t as the column with the highest variance
+            column = np.argmax(np.var(X, axis=0))
+            t = X[:, column].reshape(-1, 1)
+            cont = 0
+            conv = 10
+
+            while conv > self._tolerance:
+                t_prev = t
+                p_t = (t_prev.T @ X) / (t_prev.T @ t_prev)
+                p_t /= LA.norm(p_t)
+
+                t = X @ p_t.T
+
+                conv = np.linalg.norm(t - t_prev)
+                cont += 1
+
+            if self.verbose:
+                print(f"Component {i+1} converges after {cont} iterations")
+
+            X -= t @ p_t  # Calculate the residual matrix
+            r2.append(1 - np.sum(X**2) / np.sum(data**2))
+
+            vals[i] = np.var(t)
+            T[i] = t.reshape(X.shape[0])
+            P_t[i] = p_t
+
+        self._eigenvals = vals
+        self._loadings = P_t
+        self._scores = T.T
+        self._rsquared_acc = np.array(r2)
+        self._residuals_fit = data-T.T@P_t
+        self._mean_train = data.mean()
+        self._std_train = data.std()
+
+    def transform(self, data, y=None):
+        '''
+        Projects a set of data onto the PCA space
+
+        Parameters
+        ----------
+        data: array-like, shape (n_samples, n_features)
+            The data to be projected onto the PCA space
+
+        y: None
+            This is only added so we can use this method within a scikit-learn pipeline
             
-            tau.append(P_t.dot(z))
-            
-            t2.append((np.transpose(tau[i]).dot(LA.inv(thita))).dot(tau[i]))
-            
-            e = (np.identity(nvars)-np.transpose(P_t).dot(P_t)).dot(z)
-            
-            SPE.append(np.transpose(e).dot(e))
-        E = X_test - T.dot(P_t)
-        
-        self.SPE = np.array(SPE)
-        self.t2 = np.array(t2)
-        self.tau = np.array(tau)
-        self.residuals_pred=E
+        Returns
+        -------
+        array-like, shape (n_samples, n_components)
+            The projected data
+        '''
+
+        if isinstance(data, pd.DataFrame):
+            data = data.values
+
+        if self._demean:
+            data -= self._mean_train
+        if self._descale:
+            data /= self._std_train
+
+        return data @ self._loadings.T
+
+    def fit_transform(self, data, y=None):
+        '''
+        Fits the PCA model and projects the data onto the PCA space
+
+        Parameters
+        ----------
+        data: array-like, shape (n_samples, n_features)
+            The data to be projected onto the PCA space
+
+        y: None
+            This is only added so we can use this method within a scikit-learn pipeline
+        Returns
+        -------
+        array-like, shape (n_samples, n_components)
+            The projected data
+        '''
+        self.fit(data)
+        return self.transform(data)
 
     '''
     PLOTS
@@ -552,289 +521,289 @@ class PCA(object):
         show(p)
         
         
-class PCR(PCA):
-    def __init__(self, X, ncomps, autoescalado = True, tolerancia = 1e-15, verbose = False):
-        PCA.__init__(self, X, ncomps, autoescalado = True, tolerancia = 1e-15, verbose = False)
-        self.rsquared_fit = None
-        self.rsquared_pred = None
-        self.coefs = None
-        self.ssr_fit = None
-        self.press = None
-        self.prediction = None
+# class PCR(PCA):
+#     def __init__(self, X, ncomps, autoescalado = True, tolerancia = 1e-15, verbose = False):
+#         PCA.__init__(self, X, ncomps, autoescalado = True, tolerancia = 1e-15, verbose = False)
+#         self.rsquared_fit = None
+#         self.rsquared_pred = None
+#         self.coefs = None
+#         self.ssr_fit = None
+#         self.press = None
+#         self.prediction = None
     
     
-    def fit(self, y_train):
+#     def fit(self, y_train):
         
-        self.y_train = y_train
-        y_train = np.asarray(y_train)
+#         self.y_train = y_train
+#         y_train = np.asarray(y_train)
         
-        r2_PCR = []
-        T_PCR, P_PCR = self.scores, self.loadings
+#         r2_PCR = []
+#         T_PCR, P_PCR = self.scores, self.loadings
         
-        X_train = self.X
+#         X_train = self.X
 
-        b = np.linalg.inv(np.transpose(T_PCR).dot(T_PCR)).dot(np.transpose(T_PCR)).dot(y_train)
+#         b = np.linalg.inv(np.transpose(T_PCR).dot(T_PCR)).dot(np.transpose(T_PCR)).dot(y_train)
         
-        B_PCR = np.transpose(P_PCR).dot(b)
+#         B_PCR = np.transpose(P_PCR).dot(b)
         
-        y_hat_PCR = X_train.dot(B_PCR)
+#         y_hat_PCR = X_train.dot(B_PCR)
         
-        r2_PCR = 100*(1- np.sum((y_train-y_hat_PCR)**2)/np.sum((y_train-np.mean(y))**2))
+#         r2_PCR = 100*(1- np.sum((y_train-y_hat_PCR)**2)/np.sum((y_train-np.mean(y))**2))
     
-        self.rsquared_fit = r2_PCR
-        self.coefs = B_PCR
-        self.ssr_fit = np.sum((y_train-y_hat_PCR)**2)
+#         self.rsquared_fit = r2_PCR
+#         self.coefs = B_PCR
+#         self.ssr_fit = np.sum((y_train-y_hat_PCR)**2)
         
-    def predict(self, X_test, y_test):
+#     def predict(self, X_test, y_test):
         
-        B_PCR = self.coefs
+#         B_PCR = self.coefs
         
-        y_prediction = X_test.dot(B_PCR)
+#         y_prediction = X_test.dot(B_PCR)
         
-        self.prediction = y_prediction
-        r2_pred = 100*(1- np.sum((y_test-y_prediction)**2)/np.sum((y_test-np.mean(y_test))**2))
-        self.rsquared_pred = r2_pred
-        self.press = np.sum((y_prediction-y_test)**2)
+#         self.prediction = y_prediction
+#         r2_pred = 100*(1- np.sum((y_test-y_prediction)**2)/np.sum((y_test-np.mean(y_test))**2))
+#         self.rsquared_pred = r2_pred
+#         self.press = np.sum((y_prediction-y_test)**2)
 
-class PLS(object):
-    def __init__(self, X,y,ncomps, tol=1e-15, autoescalado=True):
+# class PLS(object):
+#     def __init__(self, X,y,ncomps, tol=1e-15, autoescalado=True):
         
-        self.X = np.asarray(X)
-        self.y = np.asarray(y)
-        self._ncomps = ncomps
-        self._autoesc = autoescalado
-        self._tolerancia = tol
-        self._nobs, self._nvars = self.X.shape
+#         self.X = np.asarray(X)
+#         self.y = np.asarray(y)
+#         self._ncomps = ncomps
+#         self._autoesc = autoescalado
+#         self._tolerancia = tol
+#         self._nobs, self._nvars = self.X.shape
         
-        self.T = None
-        self.P_t = None
-        self.U = None
-        self.C_t = None
-        self.W = None
+#         self.T = None
+#         self.P_t = None
+#         self.U = None
+#         self.C_t = None
+#         self.W = None
         
-        self.rsquare_X = None
-        self.rsquare_y = None
+#         self.rsquare_X = None
+#         self.rsquare_y = None
         
         
-    def nipals(self, X, y, n_componentes, autoesc=True):
-        X_original = self.X
-        X = self.X
+#     def nipals(self, X, y, n_componentes, autoesc=True):
+#         X_original = self.X
+#         X = self.X
         
-        y_original = self.y
-        y=self.y
+#         y_original = self.y
+#         y=self.y
         
-        dif = self._tolerancia
+#         dif = self._tolerancia
             
         
-        #Establecemos la posibilidad de autoescalar. Por defecto, la función autoescalará
-        if self._autoesc==True:
-            for i in range(X.shape[1]):
-                X[:,i]= X[:,i]-np.mean(X[:,i])
-                X[:,i]= X[:,i]/np.std(X[:,i])
+#         #Establecemos la posibilidad de autoescalar. Por defecto, la función autoescalará
+#         if self._autoesc==True:
+#             for i in range(X.shape[1]):
+#                 X[:,i]= X[:,i]-np.mean(X[:,i])
+#                 X[:,i]= X[:,i]/np.std(X[:,i])
                 
-            for i in range(y.shape[1]):   
-                y[:,i]= y[:,i]-np.mean(y[:,i])
-                y[:,i]= y[:,i]/np.std(y[:,i])
+#             for i in range(y.shape[1]):   
+#                 y[:,i]= y[:,i]-np.mean(y[:,i])
+#                 y[:,i]= y[:,i]/np.std(y[:,i])
         
         
-        if not 0 < self._tolerancia < 1:
-            raise ValueError('Tolerance must be strictly between 0 and 1')
+#         if not 0 < self._tolerancia < 1:
+#             raise ValueError('Tolerance must be strictly between 0 and 1')
                 
-        print("********* Algoritmo NIPALS para PLS ***********")
-        #Inicializamos las matrices de scores y de loadings según el número de componentes propuesto
-        r2_X = []
-        T = np.zeros(shape=(self._ncomps, X.shape[0]))
-        P_t = np.zeros(shape = (self._ncomps, X.shape[1]))
+#         print("********* Algoritmo NIPALS para PLS ***********")
+#         #Inicializamos las matrices de scores y de loadings según el número de componentes propuesto
+#         r2_X = []
+#         T = np.zeros(shape=(self._ncomps, X.shape[0]))
+#         P_t = np.zeros(shape = (self._ncomps, X.shape[1]))
         
-        r2_y = []
-        U = np.zeros(shape=(self._ncomps, y.shape[0]))
-        C_t = np.zeros(shape = (self._ncomps, y.shape[1]))
+#         r2_y = []
+#         U = np.zeros(shape=(self._ncomps, y.shape[0]))
+#         C_t = np.zeros(shape = (self._ncomps, y.shape[1]))
         
-        W_t = np.zeros(shape = (self._ncomps, y.shape[1]))
+#         W_t = np.zeros(shape = (self._ncomps, y.shape[1]))
         
         
-        for i in range(self._ncomps):
+#         for i in range(self._ncomps):
             
-            #Iniciamos u como la primera columna de Y
-            u = np.array(y[:,0])
-            u.shape=(y.shape[0], 1) #Esto sirve para obligar a que t sea un vector columna
+#             #Iniciamos u como la primera columna de Y
+#             u = np.array(y[:,0])
+#             u.shape=(y.shape[0], 1) #Esto sirve para obligar a que t sea un vector columna
             
-            cont=0
-            conv=0
+#             cont=0
+#             conv=0
             
-            while conv<y.shape[0]:
-                u_previo = u
-                w_t = (np.transpose(u_previo).dot(X))/(np.transpose(u_previo).dot(u_previo))
-                w_t = w_t/LA.norm(w_t)
+#             while conv<y.shape[0]:
+#                 u_previo = u
+#                 w_t = (np.transpose(u_previo).dot(X))/(np.transpose(u_previo).dot(u_previo))
+#                 w_t = w_t/LA.norm(w_t)
                 
-                t=X.dot(np.transpose(w_t))
+#                 t=X.dot(np.transpose(w_t))
                 
-                c_t = np.transpose(t).dot(y)/(np.transpose(t).dot(t))
+#                 c_t = np.transpose(t).dot(y)/(np.transpose(t).dot(t))
                 
-                u = y.dot(np.transpose(c_t))/(c_t.dot(np.transpose(c_t)))
-                conv = np.sum((u-u_previo)<dif)
-                cont+=1
+#                 u = y.dot(np.transpose(c_t))/(c_t.dot(np.transpose(c_t)))
+#                 conv = np.sum((u-u_previo)<dif)
+#                 cont+=1
                 
-            p_t=np.transpose(t).dot(X)/(np.transpose(t).dot(t))
+#             p_t=np.transpose(t).dot(X)/(np.transpose(t).dot(t))
             
-            print("Componente ", i+1, " converge en ", cont, " iteraciones")
-            E = X-t.dot(p_t)
-            F=y-t.dot(c_t)
+#             print("Componente ", i+1, " converge en ", cont, " iteraciones")
+#             E = X-t.dot(p_t)
+#             F=y-t.dot(c_t)
             
-            r2_X.append(1-np.sum(E**2)/np.sum(X_original**2))
-            r2_y.append(1-np.sum(F**2)/np.sum(y_original**2))
+#             r2_X.append(1-np.sum(E**2)/np.sum(X_original**2))
+#             r2_y.append(1-np.sum(F**2)/np.sum(y_original**2))
             
-            X=E
-            Y=F
+#             X=E
+#             Y=F
             
-            T[i]=t.reshape((X.shape[0]))
-            P_t[i]=p_t
+#             T[i]=t.reshape((X.shape[0]))
+#             P_t[i]=p_t
             
-            U[i]=u.reshape((X.shape[0]))
-            C_t[i]=c_t
+#             U[i]=u.reshape((X.shape[0]))
+#             C_t[i]=c_t
             
-            W_t[i]= w_t
+#             W_t[i]= w_t
             
-        T = np.transpose(T)
-        U = np.transpose(U)
+#         T = np.transpose(T)
+#         U = np.transpose(U)
         
-        self.T = T
-        self.P_t = P_t
-        self.U = U
-        self.C_t = C_t
-        self.W = W_t
+#         self.T = T
+#         self.P_t = P_t
+#         self.U = U
+#         self.C_t = C_t
+#         self.W = W_t
         
-        self.rsquare_X = r2_X
-        self.rsquare_y = r2_Y
+#         self.rsquare_X = r2_X
+#         self.rsquare_y = r2_Y
     
 
-def optimize_SPE(X_train, ncomps, alpha, threshold, iterations=500, tol=1e-15):
-    limit_SPE=1000
-    highest=1000
-    tam = X_train.shape[0]
+# def optimize_SPE(X_train, ncomps, alpha, threshold, iterations=500, tol=1e-15):
+#     limit_SPE=1000
+#     highest=1000
+#     tam = X_train.shape[0]
     
-    while highest > 0:
-        model = PCA(tolerancia=tol)
-        model.fit(X_train, ncomps)
+#     while highest > 0:
+#         model = PCA(tolerancia=tol)
+#         model.fit(X_train, ncomps)
             
-        T = model.scores
-        P_t = model.loadings
-        E=X_train-T.dot(P_t)
+#         T = model.scores
+#         P_t = model.loadings
+#         E=X_train-T.dot(P_t)
                 
-        obs = X_train.shape[0]
+#         obs = X_train.shape[0]
     
-        spe = np.array([np.transpose(E[i,:]).dot(E[i,:]) for i in range(E.shape[0])])
-        b = np.mean(spe)
-        nu = np.var(spe)
+#         spe = np.array([np.transpose(E[i,:]).dot(E[i,:]) for i in range(E.shape[0])])
+#         b = np.mean(spe)
+#         nu = np.var(spe)
     
-        ucl_SPE = nu/(2*b)*chi2.ppf(alpha, (2*b**2)/nu)
+#         ucl_SPE = nu/(2*b)*chi2.ppf(alpha, (2*b**2)/nu)
         
-        greater = []
-        for k in range(obs):
-            if spe[k]>threshold*ucl_SPE:
-                greater.append(k)
+#         greater = []
+#         for k in range(obs):
+#             if spe[k]>threshold*ucl_SPE:
+#                 greater.append(k)
                 
-        if max(spe)>threshold*ucl_SPE:
-            X_train = np.delete(X_train,np.where(spe ==max(spe)),0)
+#         if max(spe)>threshold*ucl_SPE:
+#             X_train = np.delete(X_train,np.where(spe ==max(spe)),0)
     
-        highest = len(greater) 
+#         highest = len(greater) 
     
     
-    while limit_SPE > (1-alpha)*tam:
+#     while limit_SPE > (1-alpha)*tam:
 
         
-        model = PCA(tolerancia=tol)
-        model.fit(X_train, ncomps)
+#         model = PCA(tolerancia=tol)
+#         model.fit(X_train, ncomps)
         
-        T = model.scores
-        P_t = model.loadings
-        E=X_train-T.dot(P_t)
+#         T = model.scores
+#         P_t = model.loadings
+#         E=X_train-T.dot(P_t)
                 
-        obs = X_train.shape[0]
+#         obs = X_train.shape[0]
 
-        spe = np.array([np.transpose(E[i,:]).dot(E[i,:]) for i in range(E.shape[0])])
-        b = np.mean(spe)
-        nu = np.var(spe)
+#         spe = np.array([np.transpose(E[i,:]).dot(E[i,:]) for i in range(E.shape[0])])
+#         b = np.mean(spe)
+#         nu = np.var(spe)
     
-        ucl_SPE = nu/(2*b)*chi2.ppf(alpha, (2*b**2)/nu)
+#         ucl_SPE = nu/(2*b)*chi2.ppf(alpha, (2*b**2)/nu)
         
-        greater = []
-        for k in range(obs):
-            if spe[k]>ucl_SPE:
-                greater.append(k)
+#         greater = []
+#         for k in range(obs):
+#             if spe[k]>ucl_SPE:
+#                 greater.append(k)
                 
-        if max(spe)>ucl_SPE:
-                k = np.where(spe ==max(spe))
-                X_train = np.delete(X_train, k, 0)      
+#         if max(spe)>ucl_SPE:
+#                 k = np.where(spe ==max(spe))
+#                 X_train = np.delete(X_train, k, 0)      
                 
-        limit_SPE= len(greater)
+#         limit_SPE= len(greater)
 
-    model= PCA(tolerancia = tol, autoescalado = False)
-    X_opt = X_train
-    model.fit(X_opt, ncomps)    
-    return(X_opt, model)
+#     model= PCA(tolerancia = tol, autoescalado = False)
+#     X_opt = X_train
+#     model.fit(X_opt, ncomps)    
+#     return(X_opt, model)
     
-def optimize_T2(X_train, ncomps, alpha, threshold, iterations=10, tol=1e-15):
-    limit_T2=1000
-    tam = X_train.shape[0]
-    highest = 1000
+# def optimize_T2(X_train, ncomps, alpha, threshold, iterations=10, tol=1e-15):
+#     limit_T2=1000
+#     tam = X_train.shape[0]
+#     highest = 1000
     
-    while highest > 0:
-        model = PCA(tolerancia=tol)
-        model.fit(X_train, ncomps)
+#     while highest > 0:
+#         model = PCA(tolerancia=tol)
+#         model.fit(X_train, ncomps)
             
-        T = model.scores
-        P_t = model.loadings
+#         T = model.scores
+#         P_t = model.loadings
                 
-        obs = X_train.shape[0]
+#         obs = X_train.shape[0]
         
-        dfn = ncomps/2
-        dfd = (obs-ncomps-1)/2
-        const = ((obs-1)**2)/obs
-        tau = np.array([np.sum(((T[i])**2)/np.var(T[i])) for i in range(obs)])
+#         dfn = ncomps/2
+#         dfd = (obs-ncomps-1)/2
+#         const = ((obs-1)**2)/obs
+#         tau = np.array([np.sum(((T[i])**2)/np.var(T[i])) for i in range(obs)])
     
-        ucl_T2 = (beta.ppf(alpha, dfn, dfd))*const
+#         ucl_T2 = (beta.ppf(alpha, dfn, dfd))*const
         
-        greater = []
-        for k in range(obs):
-            if tau[k]>threshold*ucl_T2:
-                greater.append(k)
+#         greater = []
+#         for k in range(obs):
+#             if tau[k]>threshold*ucl_T2:
+#                 greater.append(k)
                 
-        if max(tau)>threshold*ucl_T2:
-            X_train = np.delete(X_train,np.where(tau ==max(tau)),0)
+#         if max(tau)>threshold*ucl_T2:
+#             X_train = np.delete(X_train,np.where(tau ==max(tau)),0)
     
-        highest = len(greater)
+#         highest = len(greater)
 
-    while limit_T2 > (1-alpha)*tam:
+#     while limit_T2 > (1-alpha)*tam:
         
-        model = PCA(tolerancia = tol)
-        model.fit(X_train, ncomps)
+#         model = PCA(tolerancia = tol)
+#         model.fit(X_train, ncomps)
         
-        T = model.scores
+#         T = model.scores
         
-        obs = X_train.shape[0]
+#         obs = X_train.shape[0]
         
-        dfn = ncomps/2
-        dfd = (obs-ncomps-1)/2
-        const = ((obs-1)**2)/obs
-        tau = np.array([np.sum(((T[i])**2)/np.var(T[i])) for i in range(obs)])
+#         dfn = ncomps/2
+#         dfd = (obs-ncomps-1)/2
+#         const = ((obs-1)**2)/obs
+#         tau = np.array([np.sum(((T[i])**2)/np.var(T[i])) for i in range(obs)])
     
-        ucl_T2 = (beta.ppf(alpha, dfn, dfd))*const
+#         ucl_T2 = (beta.ppf(alpha, dfn, dfd))*const
         
-        greater = []
-        for k in range(X_train.shape[0]):
-            if tau[k]>ucl_T2:
-                greater.append(k)
+#         greater = []
+#         for k in range(X_train.shape[0]):
+#             if tau[k]>ucl_T2:
+#                 greater.append(k)
                 
-        if max(tau)>ucl_T2:
-                l = np.where(tau ==max(tau))
-                X_train = np.delete(X_train, l, 0)
+#         if max(tau)>ucl_T2:
+#                 l = np.where(tau ==max(tau))
+#                 X_train = np.delete(X_train, l, 0)
 
-        limit_T2= len(greater)
+#         limit_T2= len(greater)
         
 
-    model= PCA(tolerancia = tol, autoescalado = False)
-    X_opt = X_train
-    model.fit(X_opt, ncomps)
+#     model= PCA(tolerancia = tol, autoescalado = False)
+#     X_opt = X_train
+#     model.fit(X_opt, ncomps)
     
-    return(X_opt, model)
+#     return(X_opt, model)
