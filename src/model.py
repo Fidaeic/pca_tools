@@ -11,21 +11,17 @@ from scipy.stats import f, beta, chi2
 import altair as alt
 
 class PCA:
-    def __init__(self, ncomps, demean=True, descale=True, tolerance=1e-4, verbose=False):
+    def __init__(self, demean=True, descale=True, tolerance=1e-4, verbose=False):
         
         if not 0 < tolerance < 1:
             raise ValueError('Tolerance must be strictly between 0 and 1')
-        
-        if ncomps <= 0:
-            raise ValueError('The number of components must be strictly positive')
 
-        self._ncomps = ncomps
         self._demean = demean
         self._descale = descale
         self._tolerance = tolerance
         self.verbose = verbose
             
-    def fit(self, data):
+    def fit(self, data, ncomps=None):
         '''
         Fits the PCA model to the data
 
@@ -38,6 +34,13 @@ class PCA:
         -------
         None
         '''
+        if ncomps <= 0 or ncomps>data.shape[1]:
+            raise ValueError(f'The number of components must be between 0 and {data.shape[1]}')
+    
+        if ncomps==None:
+            ncomps = data.shape[1]
+
+        self._ncomps = ncomps
 
         #Check if X_train is a pandas dataframe
         if isinstance(data, pd.DataFrame):
