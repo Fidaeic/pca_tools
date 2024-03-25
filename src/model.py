@@ -306,10 +306,10 @@ class PCA:
         loadings.reset_index(inplace=True)
 
         # Altair plot for the scores. Includes a horizontal and a vertical line at 0
-        scores_plot = alt.Chart(scores).mark_circle().encode(
+        scores_plot = alt.Chart(scores.reset_index()).mark_circle().encode(
             x=f"PC_{comp1}",
             y=f"PC_{comp2}",
-            tooltip=[f"PC_{comp1}", f"PC_{comp2}"]
+            tooltip=['index', f"PC_{comp1}", f"PC_{comp2}"]
         ).interactive()
 
         loadings_plot = alt.Chart(loadings).mark_circle(color='red').encode(
@@ -326,6 +326,33 @@ class PCA:
         )   
     
         return (scores_plot + loadings_plot+ vline + hline)
+    
+    def loadings_barplot(self, comp:int):
+        '''
+        Generates a bar plot of the loadings of the selected component
+
+        Parameters
+        ----------
+        comp : int
+            The number of the component.
+
+        Returns
+        -------
+        None
+        '''
+        if comp <= 0:
+            raise ValueError("The number of components must be greather than 0")
+
+        loadings = self._loadings.T.copy()
+        loadings.index.name = 'variable'
+        loadings.reset_index(inplace=True)
+
+        # Altair plot for the loadings
+        return alt.Chart(loadings).mark_bar().encode(
+            x='variable',
+            y=f'PC_{comp}',
+            tooltip=['variable', f'PC_{comp}']
+        ).interactive()
     # def scree_plot(self):
     #     data = pd.DataFrame(self.eigenvals)
         
