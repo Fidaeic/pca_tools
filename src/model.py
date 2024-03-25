@@ -492,126 +492,66 @@ class PCA:
             title=f'Residuals for observation {obs} - SPE: {self._spe[obs]:.2f}'
         ).interactive()
     
-    # def scree_plot(self):
-    #     data = pd.DataFrame(self.eigenvals)
-        
-    #     data.index +=1
-        
-        
-    #     source = ColumnDataSource(data = dict(
-    #         x = data.index.values,
-    #         y= data.values))
-        
-    #     tooltips = [("Component number", "@x"),
-    #                       ("Eigenvalue", "@y")]
-        
-    #     p = figure(title='Scree plot', plot_width=800, plot_height=400, x_axis_label = "Number of components", y_axis_label="Eigenvalues", tooltips=tooltips)
-    #     p.line(x=data.index, y=data[0])
-        
-    #     p.line(x = data.index, y =1, color='red')
-    #     output_file("Scree_plot.html")
-    #     show(p)
-        
-    # def explain_plot(self):
-        
-    #     data = pd.DataFrame(self.rsquared_acc*100, columns = ["rsquared"])
-    #     data.index+=1
+    def spe_contribution_plot(self, obs:int):
+        '''
+        Generates a bar plot of the contribution of each variable to the SPE statistic of the selected observation
 
+        Parameters
+        ----------
+        obs : int
+            The number of the observation.
 
-    #     source = ColumnDataSource(data=dict(
-    #         x  = data.index.values,
-    #         value =data.values,
-    #         ))
-        
-    #     tooltips = [("Component number", "@x"),
-    #                 ("Accumulated explained variance", "@value")]
-        
-    #     p = figure(title="Explained variance", plot_width=800, plot_height=400, x_axis_label = "Number of components", y_axis_label="Accumulated explained variance", tooltips=tooltips)
-    #     p.vbar(x = data.index.values, top = data['rsquared'], width=0.8)
-    #     output_file("Explain_plot.html")
-    #     show(p)
-        
-    # def score_plot(self, comp1, comp2):
-    #     if comp1 <= 0 or comp2 <= 0:
-    #         raise ValueError("The number of components must be greather than 0")
+        Returns
+        -------
+        None
+        '''
+        if obs < 0 or obs >= self._nobs:
+            raise ValueError("The observation number must be between 0 and the number of observations")
 
-    #     meta = self.metadata.copy()
-    #     T = self.scores.copy()
-        
-    #     data = pd.DataFrame({comp1: T[:, comp1-1],
-    #                          comp2: T[:, comp2-1]})
+        residuals = self._residuals_fit[obs]**2
+        residuals = pd.DataFrame({'variable': self._variables, 'contribution': residuals})
 
-    #     source = ColumnDataSource(data=dict(
-    #         x=T[:, comp1-1],
-    #         y=T[:, comp2-1],
-    #         pais=list(meta['PAÍS'].values),
-    #         muni=list(meta['MUNICIPIO'].values)))
+        # Altair plot for the residuals
+        return alt.Chart(residuals).mark_bar().encode(
+            x=alt.X('variable', title='Variable'),
+            y=alt.Y('contribution', title='Contribution'),
+            tooltip=['variable', 'contribution']
+        ).properties(
+            title=f'Contribution to the SPE of observation {obs} - SPE: {self._spe[obs]:.2f}'
+        ).interactive()
+    
+    def hotelling_t2_contribution_plot(self, obs:int):
+        '''
+        Generates a bar plot of the contribution of each variable to the Hotelling's T2 statistic of the selected observation
 
-    #     tooltips = [
-    #                 ("Observation", "$index"),
-    #                 ("Pais", "@pais"),
-    #                 ("Municipio", "@muni"),
-    #                 ("(x,y)", "($x, $y)")
-    #     ]
-        
-    #     p1 = figure(title=f"Gráfico de scores de las componentes {comp1} y {comp2}",x_axis_label=f"Componente {comp1}", y_axis_label=f"Componente {comp2}", plot_width=800, plot_height=400, tooltips=tooltips)
-    #     p1.circle(source=source, x='x', y='y', size=5, color="navy", alpha=0.5)
+        Parameters
+        ----------
+        obs : int
+            The number of the observation.
 
-    #     output_file(f"Score_plot_comps_{comp1}-{comp2}.html")
-    #     show(p1)
+        Returns
+        -------
+        None
+        '''
+        if obs < 0 or obs >= self._nobs:
+            raise ValueError("The observation number must be between 0 and the number of observations")
 
-    # def loadings_plot(self, comp):
-    #     if comp <= 0:
-    #         raise ValueError("The number of components must be greather than 0")
-        
-    #     P_t = self.loadings
-    #     variables = self.variables.copy()
-        
-    #     data = pd.DataFrame({comp: P_t[comp-1,:]})
-        
-    #     source = ColumnDataSource(data=dict(
-    #         x = range(P_t.shape[1]),
-    #         valor=P_t[comp-1,:],
-    #         variables = list(variables)))
-        
-    #     tooltips = [("Variable", "$index"),
-    #                 ("Nombre de la variable", "@variables"),
-    #                 ("Peso", "@valor")
-    #                 ]
-        
-    #     p = figure(title=f"Gráfico de peso de las variables en la componente {comp}",x_axis_label=f"Variables", y_axis_label=f"Peso de las variables en la componente {comp}",plot_width=800, plot_height=400, tooltips = tooltips)
+        contributions = (self._loadings.values*self._training_data[obs])
+        normalized_contributions = (contributions/self._eigenvals[:, None])**2
 
-    #     p.vbar(source=source, x='x', top = 'valor', width=0.8)
-    #         #x = range(P_t.shape[1]), top = data[comp], width=0.8)
-    #     output_file(f"Loadings_plot_{comp}.html")
-    #     show(p)
-        
-        
-    # def compare_loadings(self, comp1, comp2):
-    #     if comp1 <= 0 or comp2 <= 0:
-    #         raise ValueError("The number of components must be greather than 0")
-            
-    #     P_t = self.loadings
-    #     var = self.variables.copy()
-        
-    #     data = pd.DataFrame({comp1: P_t[comp1-1,:], 
-    #                          comp2: P_t[comp2-1,:]})
-        
-    #     source = ColumnDataSource(data=dict(
-    #         x=P_t[comp1-1, :],
-    #         y=P_t[comp2-1, :],
-    #         variable=list(var)))
-        
-    #     tooltips = [("Observation", "$index"),
-    #                 ("Variable", "@variable"),
-    #                       ("(x,y)", "($x, $y)")]
-        
-    #     p1 = figure(title=f"Gráfico de loadings de las componentes {comp1} y {comp2}",x_axis_label=f"Componente {comp1}", y_axis_label=f"Componente {comp2}", plot_width=800, plot_height=400, tooltips = tooltips)
-    #     p1.circle(source=source, x='x', y='y', size=5, color="navy", alpha=0.5)
+        max_comp = np.argmax(np.sum(normalized_contributions, axis=1))
 
-    #     output_file(f"Loadings_plot_comps_{comp1}-{comp2}.html")
-    #     show(p1)
+        contributions_df = pd.DataFrame({'variable': self._variables, 'contribution': contributions[max_comp]})
 
+        # Altair plot for the residuals
+        return alt.Chart(contributions_df).mark_bar().encode(
+            x=alt.X('variable', title='Variable'),
+            y=alt.Y('contribution', title='Contribution'),
+            tooltip=['variable', 'contribution']
+        ).properties(
+            title=f'Contribution to the Hotelling\'s T2 of observation {obs} - T2: {self._hotelling[obs]:.2f}'
+        ).interactive()
+    
     # def contribution_plot_SPE_p1(self, ncomps, X, obs):
 
     #     if ncomps<=0:
