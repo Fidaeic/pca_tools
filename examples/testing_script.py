@@ -4,6 +4,7 @@ import pandas as pd
 import sys
 sys.path.append("src/")
 from model import PCA
+import numpy as np
 
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
@@ -19,30 +20,10 @@ pipeline = Pipeline([
 
 data_transform = pd.DataFrame(pipeline.fit_transform(data), columns=data.columns)
 # %%
-pca = PCA(ncomps=3, verbose=True, demean=False, descale=False, tolerance=1e-4)
+pca = PCA(ncomps=4, verbose=True, demean=False, descale=False, tolerance=1e-4)
 pca.fit(data_transform)
 #%%
-pca.transform(data_transform)
-#%%
-pca.biplot(1, 2)
-#%%
-pca.loadings_barplot(2)
+pca.spe_plot(.99)
 # %%
-
-pca._scores
+pca.hotelling_t2_plot(.99)
 # %%
-pca._loadings.T
-# %%
-# Barplot showing the difference between a specific observation and the mean of the sample
-sample_mean = data.mean()
-sample_std = data.std()
-standardized_observation = (data.loc[1554] - sample_mean) / sample_std
-
-
-standardized_observation.plot(kind='bar')
-# data.mean().plot(kind='bar', color='orange')
-
-# %%
-sample_mean
-# %%
-data.loc[1554]

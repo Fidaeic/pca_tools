@@ -89,8 +89,10 @@ class PCA:
 
         self._eigenvals = vals
         self._loadings = pd.DataFrame(P_t, columns=self._variables, index=[f"PC_{i}" for i in range(1, self._ncomps+1)])
+        self._training_data = data
         self._scores = pd.DataFrame(T.T, columns=[f"PC_{i}" for i in range(1, self._ncomps+1)])
         self._rsquared_acc = np.array(r2)
+        self._explained_variance = np.diff(np.insert(self._rsquared_acc, 0, 0))
         self._residuals_fit = data-T.T@P_t
         self._mean_train = data.mean()
         self._std_train = data.std()
@@ -189,7 +191,7 @@ class PCA:
         dfd = (self._nobs-self._ncomps-1)/2
         const = ((self._nobs-1)**2)/self._nobs
 
-        self._hotelling = np.array([np.sum((self._scores[i, :]**2)/self._eigenvals) for i in range(self._nobs)])
+        self._hotelling = np.array([np.sum((self._scores.values[i, :]**2)/self._eigenvals) for i in range(self._nobs)])
         self._hotelling_limit = beta.ppf(alpha, dfn, dfd)*const
         
     def spe(self, alpha:float=0.95):
@@ -307,8 +309,8 @@ class PCA:
 
         # Altair plot for the scores. Includes a horizontal and a vertical line at 0
         scores_plot = alt.Chart(scores.reset_index()).mark_circle().encode(
-            x=f"PC_{comp1}",
-            y=f"PC_{comp2}",
+            x=alt.X(f'PC_{comp1}',title=f'PC {comp1} - {self._explained_variance[comp1-1]*100:.2f} %'),
+            y=alt.Y(f'PC_{comp2}',title=f'PC {comp2} - {self._explained_variance[comp2-1]*100:.2f} %'),
             tooltip=['index', f"PC_{comp1}", f"PC_{comp2}"]
         ).interactive()
 
@@ -318,10 +320,10 @@ class PCA:
             tooltip=['variable', f"PC_{comp1}", f"PC_{comp2}"]
         )
 
-        vline = alt.Chart().mark_rule(strokeDash=[12, 6]).encode(
+        hline = alt.Chart().mark_rule(strokeDash=[12, 6]).encode(
             y=alt.Y(datum=0, ),
         )       
-        hline = alt.Chart().mark_rule(strokeDash=[12, 6]).encode(
+        vline = alt.Chart().mark_rule(strokeDash=[12, 6]).encode(
             x=alt.X(datum=0, )
         )   
     
@@ -349,10 +351,118 @@ class PCA:
 
         # Altair plot for the loadings
         return alt.Chart(loadings).mark_bar().encode(
-            x='variable',
-            y=f'PC_{comp}',
+            x=alt.X('variable', title='Variable'),
+            y=alt.Y(f'PC_{comp}',title=f'Loadings of PC {comp} - {self._explained_variance[comp-1]*100:.2f} %'),
             tooltip=['variable', f'PC_{comp}']
         ).interactive()
+
+    def difference_plot(self, obs:int):
+        '''
+        Generates a bar plot of the difference between a specific observation and the mean of the sample
+
+        Parameters
+        ----------
+        obs : int
+            The number of the observation.
+
+        Returns
+        -------
+        None
+        '''
+        if obs < 0 or obs >= self._nobs:
+            raise ValueError("The observation number must be between 0 and the number of observations")
+
+        standardized_observation = (self._training_data[obs] - self._mean_train) / self._std_train
+
+        df_observation = pd.DataFrame({'variable': self._variables, 'value': standardized_observation})
+
+        # Altair plot for the differences
+        return alt.Chart(df_observation).mark_bar().encode(
+            x=alt.X('variable', title='Variable'),
+            y=alt.Y('value', title='Difference with respect to the mean (std)'),
+            tooltip=['variable', 'value']
+        ).interactive()
+
+    def hotelling_t2_plot(self, alpha:float=0.95):
+        '''
+        Generates a plot of the Hotelling's T2 statistic
+
+        Parameters
+        ----------
+        alpha : float
+            Type I error. 1-alpha is the probability of rejecting a true null hypothesis.
+
+        Returns
+        -------
+        None
+        '''
+        # if not hasattr(self, '_hotelling'):
+        self.hotelling_t2(alpha)
+
+        hotelling = pd.DataFrame({'observation': range(self._nobs), 'T2': self._hotelling})
+
+        hotelling_chart = alt.Chart(hotelling).mark_line().encode(
+            x=alt.X('observation', title='Observation'),
+            y=alt.Y('T2', title="Hotelling's T2"),
+            tooltip=['observation', "T2"],
+        ).properties(
+            title=f'Hotelling\'s T2 statistic plot \n alpha: {alpha*100}% -- Threshold: {self._hotelling_limit:.2f}',
+        ).interactive()
+
+        hotelling_chart.configure_title(
+            fontSize=20,
+            font='Courier',
+            anchor='start',
+            color='gray'
+        )
+
+        threshold = alt.Chart().mark_rule(strokeDash=[12, 6], color='red').encode(
+            y=alt.Y(datum=self._hotelling_limit, title=f"Threshold -- alpha={alpha}"),
+        )       
+
+        # Altair plot for the Hotelling's T2 statistic
+        return (hotelling_chart + threshold)
+    
+    def spe_plot(self, alpha:float=0.95):
+        '''
+        Generates a plot of the SPE statistic
+
+        Parameters
+        ----------
+        alpha : float
+            Type I error. 1-alpha is the probability of rejecting a true null hypothesis.
+
+        Returns
+        -------
+        None
+        '''
+        # if not hasattr(self, '_spe'):
+        self.spe(alpha)
+
+        spe = pd.DataFrame({'observation': range(self._nobs), 'SPE': self._spe})
+
+        spe_chart = alt.Chart(spe).mark_line().encode(
+            x=alt.X('observation', title='Observation'),
+            y=alt.Y('SPE', title='SPE'),
+            tooltip=['observation', "SPE"],
+        ).properties(
+            title=f'SPE statistic plot \n alpha: {alpha*100}% -- Threshold: {self._spe_limit:.2f}',
+        ).interactive()
+
+        spe_chart.configure_title(
+            fontSize=20,
+            font='Courier',
+            anchor='start',
+            color='gray'
+        )
+
+        threshold = alt.Chart().mark_rule(strokeDash=[12, 6], color='red').encode(
+            y=alt.Y(datum=self._spe_limit, title=f"Threshold -- alpha={alpha}"),
+        )       
+
+        # Altair plot for the SPE statistic
+        return (spe_chart + threshold)
+    
     # def scree_plot(self):
     #     data = pd.DataFrame(self.eigenvals)
         
