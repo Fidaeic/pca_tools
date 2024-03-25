@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from numpy import linalg as LA
 from scipy.stats import f, beta, chi2
-import altair as al
+import altair as alt
 
 class PCA:
     def __init__(self, ncomps, demean=True, descale=True, tolerance=1e-4, verbose=False):
@@ -251,13 +251,81 @@ class PCA:
             mask = np.random.choice(self._scores.shape[0], 5000, replace=False)
             scores = self._scores.iloc[mask]
 
-        return al.Chart(scores).mark_circle().encode(
+        # Altair plot for the scores. Includes a horizontal and a vertical line at 0
+        scatter = alt.Chart(scores).mark_circle().encode(
             x=f"PC_{comp1}",
             y=f"PC_{comp2}",
             tooltip=[f"PC_{comp1}", f"PC_{comp2}"]
         ).interactive()
 
+        vline = alt.Chart().mark_rule(strokeDash=[12, 6]).encode(
+            y=alt.Y(datum=0, ),
+        )       
+        hline = alt.Chart().mark_rule(strokeDash=[12, 6]).encode(
+            x=alt.X(datum=0, )
+        )   
+    
+        return (scatter + vline + hline)
+    
+    def biplot(self, comp1:int, comp2:int):
+        '''
+        Generates a scatter plot of the selected components with the scores and the loadings
 
+        Parameters
+        ----------
+        comp1 : int
+            The number of the first component.
+        comp2 : int
+            The number of the second component.
+
+        Returns
+        -------
+        None
+        '''
+        if comp1 <= 0 or comp2 <= 0:
+            raise ValueError("The number of components must be greather than 0")
+
+        scores = self._scores.copy()
+        if self._scores.shape[0]>5000:
+            mask = np.random.choice(self._scores.shape[0], 5000, replace=False)
+            scores = self._scores.iloc[mask]
+
+        max_pc1 = self._scores[f'PC_{comp1}'].max()
+        max_pc2 = self._scores[f'PC_{comp2}'].max()
+        hypothenuse = (max_pc1**2 + max_pc2**2)**0.5
+        hypothenuse
+
+        max_loadings1 = self._loadings.T[f'PC_{comp1}'].max()
+        max_loadings2 = self._loadings.T[f'PC_{comp2}'].max()
+        hypothenuse_loadings = (max_loadings1**2 + max_loadings2**2)**0.5
+
+        ratio = hypothenuse/hypothenuse_loadings
+
+        loadings = self._loadings.T.copy()*ratio
+        loadings.index.name = 'variable'
+        loadings.reset_index(inplace=True)
+
+        # Altair plot for the scores. Includes a horizontal and a vertical line at 0
+        scores_plot = alt.Chart(scores).mark_circle().encode(
+            x=f"PC_{comp1}",
+            y=f"PC_{comp2}",
+            tooltip=[f"PC_{comp1}", f"PC_{comp2}"]
+        ).interactive()
+
+        loadings_plot = alt.Chart(loadings).mark_circle(color='red').encode(
+            x=f"PC_{comp1}",
+            y=f"PC_{comp2}",
+            tooltip=['variable', f"PC_{comp1}", f"PC_{comp2}"]
+        )
+
+        vline = alt.Chart().mark_rule(strokeDash=[12, 6]).encode(
+            y=alt.Y(datum=0, ),
+        )       
+        hline = alt.Chart().mark_rule(strokeDash=[12, 6]).encode(
+            x=alt.X(datum=0, )
+        )   
+    
+        return (scores_plot + loadings_plot+ vline + hline)
     # def scree_plot(self):
     #     data = pd.DataFrame(self.eigenvals)
         
