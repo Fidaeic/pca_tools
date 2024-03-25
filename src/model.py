@@ -465,6 +465,32 @@ class PCA:
 
         # Altair plot for the SPE statistic
         return (spe_chart + threshold)
+
+    def residual_barplot(self, obs:int):
+        '''
+        Generates a bar plot of the residuals of the selected observation
+
+        Parameters
+        ----------
+        obs : int
+            The number of the observation.
+
+        Returns
+        -------
+        None
+        '''
+        if obs < 0 or obs >= self._nobs:
+            raise ValueError("The observation number must be between 0 and the number of observations")
+
+        residuals = pd.DataFrame({'variable': self._variables, 'residual': self._residuals_fit[obs]})
+        # Altair plot for the residuals
+        return alt.Chart(residuals).mark_bar().encode(
+            x=alt.X('variable', title='Variable'),
+            y=alt.Y('residual', title='Residual'),
+            tooltip=['variable', 'residual']
+        ).properties(
+            title=f'Residuals for observation {obs} - SPE: {self._spe[obs]:.2f}'
+        ).interactive()
     
     # def scree_plot(self):
     #     data = pd.DataFrame(self.eigenvals)
