@@ -9,17 +9,24 @@ import pandas as pd
 from numpy import linalg as LA
 from scipy.stats import f, beta, chi2
 import altair as alt
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler
 
 class PCA:
-    def __init__(self, demean=True, descale=True, tolerance=1e-4, verbose=False):
+    def __init__(self, standardize=True, tolerance=1e-4, verbose=False):
         
         if not 0 < tolerance < 1:
             raise ValueError('Tolerance must be strictly between 0 and 1')
 
-        self._demean = demean
-        self._descale = descale
+        self._standardize = standardize
         self._tolerance = tolerance
         self.verbose = verbose
+
+        self._scaler = Pipeline([
+            ('imputer', SimpleImputer(strategy='mean')),
+            ('scaler', StandardScaler())
+        ])
             
     def fit(self, data, ncomps=None):
         '''
@@ -50,14 +57,11 @@ class PCA:
             self._variables = [f"X{i}" for i in range(data.shape[1])]
         
         self._nobs, self._nvars = data.shape
-        X = data.copy()
-
         # Descale and demean matrix
-        if self._demean:
-            X -= np.mean(X, axis=0)
-        if self._descale:
-            X /= np.std(X, axis=0)
+        if self._standardize:
+            X = self._scaler.fit_transform(data)
 
+        X_pca = X.copy()
         r2 = []
         T = np.zeros((self._ncomps, X.shape[0]))
         P_t = np.zeros((self._ncomps, X.shape[1]))
@@ -65,17 +69,17 @@ class PCA:
 
         for i in range(self._ncomps):
             # Initialize t as the column with the highest variance
-            column = np.argmax(np.var(X, axis=0))
-            t = X[:, column].reshape(-1, 1)
+            column = np.argmax(np.var(X_pca, axis=0))
+            t = X_pca[:, column].reshape(-1, 1)
             cont = 0
             conv = 10
 
             while conv > self._tolerance:
                 t_prev = t
-                p_t = (t_prev.T @ X) / (t_prev.T @ t_prev)
+                p_t = (t_prev.T @ X_pca) / (t_prev.T @ t_prev)
                 p_t /= LA.norm(p_t)
 
-                t = X @ p_t.T
+                t = X_pca @ p_t.T
 
                 conv = np.linalg.norm(t - t_prev)
                 cont += 1
@@ -83,8 +87,8 @@ class PCA:
             if self.verbose:
                 print(f"Component {i+1} converges after {cont} iterations")
 
-            X -= t @ p_t  # Calculate the residual matrix
-            r2.append(1 - np.sum(X**2) / np.sum(data**2))
+            X_pca -= t @ p_t  # Calculate the residual matrix
+            r2.append(1 - np.sum(X_pca**2) / np.sum(X**2))
 
             vals[i] = np.var(t)
             T[i] = t.reshape(X.shape[0])
@@ -93,12 +97,13 @@ class PCA:
         self._eigenvals = vals
         self._loadings = pd.DataFrame(P_t, columns=self._variables, index=[f"PC_{i}" for i in range(1, self._ncomps+1)])
         self._training_data = data
+        self._processed_training_data = X
         self._scores = pd.DataFrame(T.T, columns=[f"PC_{i}" for i in range(1, self._ncomps+1)])
         self._rsquared_acc = np.array(r2)
         self._explained_variance = np.diff(np.insert(self._rsquared_acc, 0, 0))
-        self._residuals_fit = data-T.T@P_t
-        self._mean_train = data.mean()
-        self._std_train = data.std()
+        self._residuals_fit = X-T.T@P_t
+        self._mean_train = X.mean()
+        self._std_train = X.std()
 
     def transform(self, data, y=None):
         '''
@@ -121,12 +126,13 @@ class PCA:
         if isinstance(data, pd.DataFrame):
             data = data.values
 
-        if self._demean:
-            data -= self._mean_train
-        if self._descale:
-            data /= self._std_train
+        if self._standardize:
+            data = self._scaler.transform(data)  
+
+
+        self._scores_test = pd.DataFrame(data @ self._loadings.T, columns=self._scores.columns)
         
-        return pd.DataFrame(data @ self._loadings.T, columns=self._scores.columns)
+        return self._scores_test 
 
     def fit_transform(self, data, y=None):
         '''
@@ -194,7 +200,8 @@ class PCA:
         dfd = (self._nobs-self._ncomps-1)/2
         const = ((self._nobs-1)**2)/self._nobs
 
-        self._hotelling = np.array([np.sum((self._scores.values[i, :]**2)/self._eigenvals) for i in range(self._nobs)])
+        self._hotelling = np.array([np.sum((self._scores.values[i, :]**2)/self._eigenvals) 
+                                    for i in range(self._nobs)])
         self._hotelling_limit = beta.ppf(alpha, dfn, dfd)*const
         
     def spe(self, alpha:float=0.95):
@@ -233,7 +240,7 @@ class PCA:
     '''
     PLOTS
     '''
-    def score_plot(self, comp1:int, comp2:int):
+    def score_plot(self, comp1:int, comp2:int, hue:pd.Series=None, plot_test=False):
         '''
         Generates a score plot of the selected components
 
@@ -250,25 +257,49 @@ class PCA:
         '''
         if comp1 <= 0 or comp2 <= 0:
             raise ValueError("The number of components must be greather than 0")
+        
+        if plot_test==True and not hasattr(self, '_scores_test'):
+            raise ValueError("No test data has been projected onto the latent space. Please use the transform or the fit_transform method before plotting the test data")
 
-        scores = self._scores.copy()
-        if self._scores.shape[0]>5000:
-            mask = np.random.choice(self._scores.shape[0], 5000, replace=False)
-            scores = self._scores.iloc[mask]
+        scores = self._scores.reset_index()
 
-        # Altair plot for the scores. Includes a horizontal and a vertical line at 0
-        scatter = alt.Chart(scores).mark_circle().encode(
-            x=f"PC_{comp1}",
-            y=f"PC_{comp2}",
-            tooltip=[f"PC_{comp1}", f"PC_{comp2}"]
-        ).interactive()
+        hline = alt.Chart(pd.DataFrame({'y': [0]})).mark_rule(strokeDash=[12, 6]).encode(y='y').interactive()
+        vline = alt.Chart(pd.DataFrame({'x': [0]})).mark_rule(strokeDash=[12, 6]).encode(x='x').interactive()
 
-        hline = alt.Chart(pd.DataFrame({'y': [0]})).mark_rule(strokeDash=[12, 6]).encode(y='y')
-        vline = alt.Chart(pd.DataFrame({'x': [0]})).mark_rule(strokeDash=[12, 6]).encode(x='x')
-    
+        if hue is not None:
+            # Check if hue is a python series or a numpy array
+            if not isinstance(hue, pd.Series):
+                raise ValueError("Hue must be a pandas Series")
+            
+            scores[hue.name] = hue
+        
+            scatter = alt.Chart(scores).mark_circle().encode(
+                x=f"PC_{comp1}:Q",
+                y=f"PC_{comp2}:Q",
+                tooltip=[f"PC_{comp1}", f"PC_{comp2}", hue.name],
+                color=alt.Color(hue.name)
+            ).interactive()
+
+        else:
+            scatter = alt.Chart(scores).mark_point().encode(
+                x=f"PC_{comp1}:Q",
+                y=f"PC_{comp2}:Q",
+                tooltip=['index', f"PC_{comp1}", f"PC_{comp2}"]
+            ).interactive()
+
+        if plot_test:
+            scores_test = self._scores_test.reset_index()
+            scatter_test = alt.Chart(scores_test).mark_point(color='black', opacity=.1).encode(
+                x=f"PC_{comp1}",
+                y=f"PC_{comp2}",
+                tooltip=['index', f"PC_{comp1}", f"PC_{comp2}"]
+            ).interactive()
+
+            return (scatter_test+ scatter + vline + hline)
+
         return (scatter + vline + hline)
     
-    def biplot(self, comp1:int, comp2:int):
+    def biplot(self, comp1:int, comp2:int, hue:pd.Series=None, plot_test=False):
         '''
         Generates a scatter plot of the selected components with the scores and the loadings
 
@@ -278,6 +309,10 @@ class PCA:
             The number of the first component.
         comp2 : int
             The number of the second component.
+        hue : pd.Series
+            A pandas Series with the hue of the plot. It must have the same length as the number of observations
+        plot_test : bool
+            If True, the test data will be plotted as well
 
         Returns
         -------
@@ -285,6 +320,9 @@ class PCA:
         '''
         if comp1 <= 0 or comp2 <= 0:
             raise ValueError("The number of components must be greather than 0")
+        
+        if plot_test==True and not hasattr(self, '_scores_test'):
+            raise ValueError("No test data has been projected onto the latent space. Please use the transform or the fit_transform method before plotting the test data")
 
         scores = self._scores.copy()
         if self._scores.shape[0]>5000:
@@ -306,13 +344,29 @@ class PCA:
         loadings.index.name = 'variable'
         loadings.reset_index(inplace=True)
 
-        # Altair plot for the scores. Includes a horizontal and a vertical line at 0
-        scores_plot = alt.Chart(scores.reset_index()).mark_circle().encode(
-            x=alt.X(f'PC_{comp1}',title=f'PC {comp1} - {self._explained_variance[comp1-1]*100:.2f} %'),
-            y=alt.Y(f'PC_{comp2}',title=f'PC {comp2} - {self._explained_variance[comp2-1]*100:.2f} %'),
-            tooltip=['index', f"PC_{comp1}", f"PC_{comp2}"]
-        ).interactive()
+        
+        if hue is not None:
+            # Check if hue is a python series or a numpy array
+            if not isinstance(hue, pd.Series):
+                raise ValueError("Hue must be a pandas Series")
+            
+            scores[hue.name] = hue
 
+            scores_plot = alt.Chart(scores.reset_index()).mark_circle().encode(
+                x=alt.X(f'PC_{comp1}',title=f'PC {comp1} - {self._explained_variance[comp1-1]*100:.2f} %'),
+                y=alt.Y(f'PC_{comp2}',title=f'PC {comp2} - {self._explained_variance[comp2-1]*100:.2f} %'),
+                tooltip=['index', f"PC_{comp1}", f"PC_{comp2}", hue.name],
+                color=alt.Color(hue.name)
+            ).interactive()
+
+        else:
+            scores_plot = alt.Chart(scores.reset_index()).mark_circle().encode(
+                x=alt.X(f'PC_{comp1}',title=f'PC {comp1} - {self._explained_variance[comp1-1]*100:.2f} %'),
+                y=alt.Y(f'PC_{comp2}',title=f'PC {comp2} - {self._explained_variance[comp2-1]*100:.2f} %'),
+                tooltip=['index', f"PC_{comp1}", f"PC_{comp2}"]
+            ).interactive()
+
+        
         loadings_plot = alt.Chart(loadings).mark_circle(color='red').encode(
             x=f"PC_{comp1}",
             y=f"PC_{comp2}",
@@ -321,6 +375,16 @@ class PCA:
 
         hline = alt.Chart(pd.DataFrame({'y': [0]})).mark_rule(strokeDash=[12, 6]).encode(y='y')
         vline = alt.Chart(pd.DataFrame({'x': [0]})).mark_rule(strokeDash=[12, 6]).encode(x='x')
+
+        if plot_test:
+            scores_test = self._scores_test.reset_index()
+            scatter_test = alt.Chart(scores_test).mark_point(color='black', opacity=.1).encode(
+                x=f"PC_{comp1}",
+                y=f"PC_{comp2}",
+                tooltip=['index', f"PC_{comp1}", f"PC_{comp2}"]
+            ).interactive()
+
+            return (scatter_test + scores_plot + loadings_plot + vline + hline)
     
         return (scores_plot + loadings_plot+ vline + hline)
     
@@ -367,7 +431,7 @@ class PCA:
         if obs < 0 or obs >= self._nobs:
             raise ValueError("The observation number must be between 0 and the number of observations")
 
-        standardized_observation = (self._training_data[obs] - self._mean_train) / self._std_train
+        standardized_observation = (self._processed_training_data[obs] - self._mean_train) / self._std_train
 
         df_observation = pd.DataFrame({'variable': self._variables, 'value': standardized_observation})
 
@@ -528,7 +592,7 @@ class PCA:
         if obs < 0 or obs >= self._nobs:
             raise ValueError("The observation number must be between 0 and the number of observations")
 
-        contributions = (self._loadings.values*self._training_data[obs])
+        contributions = (self._loadings.values*self._processed_training_data[obs])
         normalized_contributions = (contributions/self._eigenvals[:, None])**2
 
         max_comp = np.argmax(np.sum(normalized_contributions, axis=1))
@@ -545,7 +609,7 @@ class PCA:
         ).interactive()
     
 
-    
+
 # class PCR(PCA):
 #     def __init__(self, X, ncomps, autoescalado = True, tolerancia = 1e-15, verbose = False):
 #         PCA.__init__(self, X, ncomps, autoescalado = True, tolerancia = 1e-15, verbose = False)
