@@ -263,12 +263,8 @@ class PCA:
             tooltip=[f"PC_{comp1}", f"PC_{comp2}"]
         ).interactive()
 
-        vline = alt.Chart().mark_rule(strokeDash=[12, 6]).encode(
-            y=alt.Y(datum=0, ),
-        )       
-        hline = alt.Chart().mark_rule(strokeDash=[12, 6]).encode(
-            x=alt.X(datum=0, )
-        )   
+        hline = alt.Chart(pd.DataFrame({'y': [0]})).mark_rule(strokeDash=[12, 6]).encode(y='y')
+        vline = alt.Chart(pd.DataFrame({'x': [0]})).mark_rule(strokeDash=[12, 6]).encode(x='x')
     
         return (scatter + vline + hline)
     
@@ -323,12 +319,8 @@ class PCA:
             tooltip=['variable', f"PC_{comp1}", f"PC_{comp2}"]
         )
 
-        hline = alt.Chart().mark_rule(strokeDash=[12, 6]).encode(
-            y=alt.Y(datum=0, ),
-        )       
-        vline = alt.Chart().mark_rule(strokeDash=[12, 6]).encode(
-            x=alt.X(datum=0, )
-        )   
+        hline = alt.Chart(pd.DataFrame({'y': [0]})).mark_rule(strokeDash=[12, 6]).encode(y='y')
+        vline = alt.Chart(pd.DataFrame({'x': [0]})).mark_rule(strokeDash=[12, 6]).encode(x='x')
     
         return (scores_plot + loadings_plot+ vline + hline)
     
@@ -419,9 +411,9 @@ class PCA:
             color='gray'
         )
 
-        threshold = alt.Chart().mark_rule(strokeDash=[12, 6], color='red').encode(
-            y=alt.Y(datum=self._hotelling_limit, title=f"Threshold -- alpha={alpha}"),
-        )       
+        threshold = alt.Chart(
+                        pd.DataFrame({'y': [self._hotelling_limit]})).mark_rule(
+                        strokeDash=[12, 6], color='red').encode(y='y')
 
         # Altair plot for the Hotelling's T2 statistic
         return (hotelling_chart + threshold)
@@ -459,9 +451,9 @@ class PCA:
             color='gray'
         )
 
-        threshold = alt.Chart().mark_rule(strokeDash=[12, 6], color='red').encode(
-            y=alt.Y(datum=self._spe_limit, title=f"Threshold -- alpha={alpha}"),
-        )       
+        threshold = alt.Chart(
+                        pd.DataFrame({'y': [self._spe_limit]})).mark_rule(
+                        strokeDash=[12, 6], color='red').encode(y='y')
 
         # Altair plot for the SPE statistic
         return (spe_chart + threshold)
@@ -549,265 +541,11 @@ class PCA:
             y=alt.Y('contribution', title='Contribution'),
             tooltip=['variable', 'contribution']
         ).properties(
-            title=f'Contribution to the Hotelling\'s T2 of observation {obs} - T2: {self._hotelling[obs]:.2f}'
+            title=f'Contribution to the Hotelling\'s T2 of observation {obs} - T2: {self._hotelling[obs]:.2f} - Comp: {max_comp}'
         ).interactive()
     
-    # def contribution_plot_SPE_p1(self, ncomps, X, obs):
 
-    #     if ncomps<=0:
-    #         raise ValueError("The number of components must be greather than 0")
-            
-    #     T = self.scores[:,:ncomps]
-    #     P_t = self.loadings[:ncomps,:]
-               
-    #     E = X-T.dot(P_t)
-        
-    #     contrib = E[obs]**2
-        
-    #     tooltips = [("Variable", "$index"),
-    #                       ("(x,y)", "($x, $y)")]
-        
-    #     p = figure(title = f"Gráfico de contribución para la observación {obs}", plot_width=800, plot_height=400, tooltips=tooltips)
-    #     p.vbar(x = range(E.shape[1]), top = contrib, width=0.8)
-    #     output_file(f"Loadings_plot_ncomps-{ncomps}_obs-{obs}.html")
-    #     show(p)
-        
-    # def contribution_plot_SPE_p2(self, obs):
-
-
-    #     E = self.residuals_pred
-        
-    #     contrib = E[obs]**2
-        
-    #     tooltips = [("Variable", "$index"),
-    #                       ("(x,y)", "($x, $y)")]
-        
-    #     p = figure(title = f"Contribution plot for observation {obs}", plot_width=800, plot_height=400, tooltips=tooltips)
-    #     p.vbar(x = range(E.shape[1]), top = contrib, width=0.8)
-    #     show(p)
-        
-    # def tau_plot_T2_p1(self, obs):
-
-    #     T = self.scores
-        
-    #     lam = [np.var(T[:,i]) for i in range(T.shape[1])]
-        
-    #     contrib = [(T[obs,i]/lam[i])**2 for i in range(T.shape[1])]
-        
-    #     tooltips = [("Variable", "$index"),
-    #                       ("(x,y)", "($x, $y)")]
-        
-    #     p = figure(title = f"Score plot for observation {obs}", plot_width=800, plot_height=400, tooltips=tooltips)
-    #     p.vbar(x = range(T.shape[1]), top = contrib, width=0.8)
-    #     show(p)
-        
-    # def tau_plot_T2_p2(self, obs):
-
-    #     tau = self.tau
-        
-    #     lam = [np.var(tau[:,i]) for i in range(tau.shape[1])]
-        
-    #     contrib = [(tau[obs,i]/lam[i])**2 for i in range(tau.shape[1])]
-
-    #     tooltips = [("Variable", "$index"),
-    #                       ("(x,y)", "($x, $y)")]
-        
-    #     p = figure(title = f"Score plot for observation {obs}", plot_width=800, plot_height=400, tooltips=tooltips)
-    #     p.vbar(x = range(tau.shape[1]), top = contrib, width=0.8)
-    #     show(p)
-        
-    # def contribution_plot_T2(self, comp, X, obs):
-
-    #     if comp <=0:
-    #         raise ValueError("The number of components must be greather than 0")
-        
-    #     P_t = self.loadings
-    #     contrib = (P_t[comp-1, :]*X[obs,:]).reshape((X.shape[1]))
-        
-    #     tooltips = [("Variable", "$index"),
-    #                       ("(x,y)", "($x, $y)")]
-        
-    #     p = figure(title = f"Contribution plot for observation {obs} and component {comp}", plot_width=800, plot_height=400, tooltips=tooltips)
-    #     p.vbar(x = range(P_t.shape[1]), top = contrib, width=0.8)
-    #     show(p)
-        
-        
-    # def tau_plot(self, obs, ncomps):
-
-    #     tau = self.tau
-        
-        
-    #     p = figure(title = f"Tau plot for observation {obs}", plot_width=800, plot_height=400)
-    #     p.vbar(x = range(1,ncomps+1), top = tau[obs], width=0.8)
-        
-    #     show(p)
     
-    # def T2_plot_p1(self, ncomps, alpha):
-
-    #     if ncomps <=1:
-    #         raise ValueError("The number of components must be greather than 1")
-        
-    #     if ncomps > self._ncomps:
-    #         raise ValueError("The number of components of the plot can't be greater than the number of components of the model")
-        
-        
-    #     obs = self._nobs
-    #     T = self.scores[:,:ncomps]
-    #     X_train = self.X_train
-        
-    #     tau = np.array([np.sum(((T[i])**2)/np.var(T[i])) for i in range(obs)])
-    
-        
-    #     source=ColumnDataSource(data=dict(
-    #         x=range(0,X_train.shape[0]),
-    #         y=tau,
-    #         a = X_train[:,-4],
-    #         dm = X_train[:, -3],
-    #         m = X_train[:, -2],
-    #         year = X_train[:,-1]))
-        
-    #     dfn = ncomps/2
-    #     dfd = (obs-ncomps-1)/2
-    #     const = ((obs-1)**2)/obs
-        
-        
-    #     tooltips = [("Observation", "@x"),
-    #                 ("T2 value", "@y"),
-    #                 ("Week day", "@a"),
-    #                 ("Day of month", "@dm"),
-    #                 ("Month", "@m"),
-    #                 ("Year", "@year")]
-
-               
-    #     p = figure(title = f"Hotelling's T2 plot for {ncomps} components (Phase I)",plot_width=800, plot_height=400, tooltips=tooltips)
-    #     p.line(x= "x", y="y", source=source)
-    #     p.line(x = "x", y= (beta.ppf(alpha, dfn, dfd))*const, source=source, line_color = 'red')
-    #     show(p)
-        
-    # def SPE_plot_p1(self, ncomps, alpha):
-
-    #     if ncomps <=0:
-    #         raise ValueError("The number of components must be greather than 0")
-            
-    #     if ncomps > self._ncomps:
-    #         raise ValueError("The number of components of the plot can't be greater than the number of components of the model")
-        
-    #     X = self.X_train
-    #     T = self.scores[:,:ncomps]
-    #     P_t = self.loadings[:ncomps,:]
-               
-    #     E = X-T.dot(P_t)
-        
-    #     spe = np.array([np.transpose(E[i,:]).dot(E[i,:]) for i in range(E.shape[0])])
-        
-    #     source=ColumnDataSource(data=dict(
-    #         x=range(0,X.shape[0]),
-    #         y=spe,
-    #         a = X[:,-4],
-    #         dm = X[:, -3],
-    #         m = X[:, -2],
-    #         year = X[:,-1]))
-        
-    #     tooltips = [("Observation", "@x"),
-    #                 ("SPE value", "@y"),
-    #                 ("Week day", "@a"),
-    #                 ("Day of month", "@dm"),
-    #                 ("Month", "@m"),
-    #                 ("Year", "@year")]
-        
-    #     #Calculation of UCL for SPE
-    #     beta = np.mean(spe)
-    #     nu = np.var(spe)
-        
-    #     ucl_alpha = nu/(2*beta)*chi2.ppf(alpha, (2*beta**2)/nu)
-        
-    #     p = figure(title = f"SPE plot for {ncomps} components (Phase I)", plot_width=800, plot_height=400, tooltips=tooltips)
-        
-    #     p.line(x= "x", y="y", source=source)
-        
-    #     p.line(x = "x", y= ucl_alpha,source=source, line_color = 'red')
-    #     show(p)
-        
-
-    # def T2_plot_p2(self, ncomps, alpha):
-
-    #     if ncomps > self._ncomps:
-    #         raise ValueError("The number of components of the plot can't be greater than the number of components of the model")
-        
-    #     obs = self._nobs
-    #     dfn = ncomps
-    #     dfd = obs-ncomps
-    #     const = (((obs**2)-1)*ncomps)/(obs*(obs-ncomps))
-    #     T = self.scores
-    #     X = self.X_test
-        
-        
-    #     source=ColumnDataSource(data=dict(
-    #         x=range(0,X.shape[0]),
-    #         y=self.t2,
-    #         a = X[:,-4],
-    #         dm = X[:, -3],
-    #         m = X[:, -2],
-    #         year = X[:,-1]))
-        
-    #     tooltips = [("Observation", "@x"),
-    #                 ("T2 value", "@y"),
-    #                 ("Week day", "@a"),
-    #                 ("Day of month", "@dm"),
-    #                 ("Month", "@m"),
-    #                 ("Year", "@year")]
-        
-    #     p = figure(title = f"T2 plot for {ncomps} components (Phase II)", plot_width=800, plot_height=400, tooltips=tooltips)
-    #     p.line(x= "x", y="y", source=source)
-
-    #     p.line(x = "x", y= (f.ppf(alpha, dfn, dfd))*const, source=source, line_color = 'red')
-    #     show(p)
-        
-    # def SPE_plot_p2(self, ncomps, alpha):
-
-    #     if ncomps <=0:
-    #         raise ValueError("The number of components must be greather than 0")
-            
-    #     if ncomps > self._ncomps:
-    #         raise ValueError("The number of components of the plot can't be greater than the number of components of the model")
-        
-    #     X= self.X_test
-        
-    #     source=ColumnDataSource(data=dict(
-    #         x=range(0,X.shape[0]),
-    #         y=self.SPE,
-    #         a = X[:,-4],
-    #         dm = X[:, -3],
-    #         m = X[:, -2],
-    #         year = X[:,-1]))
-        
-    #     #Calculation of UCL for 
-    #     n = X.shape[0]
-    #     k = X.shape[1]
-    #     a=ncomps
-    #     c=1
-        
-    #     E =self.residuals_pred
-        
-    #     s_0 = np.sqrt(np.sum(E**2)/((n-a-1)*(k-a)))
-        
-    #     ucl_alpha = (((k-a)/c)*s_0**2)*f.ppf(alpha, k-a, (n-a-1)*(k-a))
-        
-    #     tooltips = [("Observation", "@x"),
-    #                 ("SPE value", "@y"),
-    #                 ("Week day", "@a"),
-    #                 ("Day of month", "@dm"),
-    #                 ("Month", "@m"),
-    #                 ("Year", "@year")]
-        
-    #     p = figure(title = f"SPE plot for {ncomps} components (Phase II)", plot_width=800, plot_height=400, tooltips=tooltips)
-        
-    #     p.line(x= "x", y="y", source=source)
-        
-    #     p.line(x = "x", y= ucl_alpha,source=source, line_color = 'red')
-    #     show(p)
-        
-        
 # class PCR(PCA):
 #     def __init__(self, X, ncomps, autoescalado = True, tolerancia = 1e-15, verbose = False):
 #         PCA.__init__(self, X, ncomps, autoescalado = True, tolerancia = 1e-15, verbose = False)
