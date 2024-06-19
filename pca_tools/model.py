@@ -11,10 +11,10 @@ from scipy.stats import f, beta, chi2
 import altair as alt
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
 class PCA:
-    def __init__(self, standardize=True, tolerance=1e-4, verbose=False):
+    def __init__(self, n_comps=None, standardize=True, tolerance=1e-4, verbose=False):
         
         if not 0 < tolerance < 1:
             raise ValueError('Tolerance must be strictly between 0 and 1')
@@ -22,13 +22,46 @@ class PCA:
         self._standardize = standardize
         self._tolerance = tolerance
         self.verbose = verbose
+        self._ncomps = n_comps
 
         self._scaler = Pipeline([
-            ('imputer', SimpleImputer(strategy='mean')),
+            # ('imputer', SimpleImputer(strategy='mean')),
             ('scaler', StandardScaler())
         ])
+
+    def get_params(self, deep=True):
+        return {"standardize": self._standardize,
+                "tolerance": self._tolerance,
+                "verbose": self._verbose,
+                "n_comps": self._ncomps}
+    
+    def set_params(self, **params):
+        for key, value in params.items():
+            setattr(self, key, value)
+        return self
+
+
+    def train(self, data, numerical_features=[], alpha=0.95):
+
+        if not isinstance(data, pd.DataFrame):
+            raise ValueError(f'Data must be of type pandas DataFrame, not {type(data)}')
+
+        if not isinstance(numerical_features, list):
+            raise ValueError(f'Numerical features must be a list, not {type(numerical_features)}')
+        
+        if not 0 < alpha < 1:
+            raise ValueError('Alpha must be strictly between 0 and 1')
+
+        self._alpha = alpha
+        self.fit(data, numerical_features)
+
+        self.spe()
+        self.hotelling_t2()
+
+        self.control_limits(alpha=self._alpha)
+
             
-    def fit(self, data, ncomps=None):
+    def fit(self, data, numerical_features=[]):
         '''
         Fits the PCA model to the data
 
@@ -41,25 +74,34 @@ class PCA:
         -------
         None
         '''
-        if ncomps <= 0 or ncomps>data.shape[1]:
+        if self._ncomps==None:
+            self._ncomps = data.shape[1]
+
+        if self._ncomps <= 0 or self._ncomps>data.shape[1]:
             raise ValueError(f'The number of components must be between 0 and {data.shape[1]}')
-    
-        if ncomps==None:
-            ncomps = data.shape[1]
-
-        self._ncomps = ncomps
-
-        #Check if X_train is a pandas dataframe
-        if isinstance(data, pd.DataFrame):
-            self._variables = data.columns
-            data = data.values
-        else:
-            self._variables = [f"X{i}" for i in range(data.shape[1])]
         
+        if not isinstance(data, pd.DataFrame):
+            raise ValueError(f'Data must be of type pandas DataFrame, not {type(data)}')
+        
+        if not isinstance(numerical_features, list):
+            raise ValueError(f'Numerical features must be a list, not {type(numerical_features)}')
+        
+        self._variables = data.columns
+        self._index = data.index       
+        self._index_name = data.index.name
         self._nobs, self._nvars = data.shape
+
+        self._numerical_features = numerical_features
+
+        X = data.copy()
         # Descale and demean matrix
         if self._standardize:
-            X = self._scaler.fit_transform(data)
+            if self._numerical_features:
+                X[self._numerical_features] = self._scaler.fit_transform(X[self._numerical_features])
+            else:
+                X = pd.DataFrame(self._scaler.fit_transform(X), columns=self._variables, index=self._index)
+        
+        X = X.values
 
         X_pca = X.copy()
         r2 = []
@@ -98,7 +140,7 @@ class PCA:
         self._loadings = pd.DataFrame(P_t, columns=self._variables, index=[f"PC_{i}" for i in range(1, self._ncomps+1)])
         self._training_data = data
         self._processed_training_data = X
-        self._scores = pd.DataFrame(T.T, columns=[f"PC_{i}" for i in range(1, self._ncomps+1)])
+        self._scores = pd.DataFrame(T.T, columns=[f"PC_{i}" for i in range(1, self._ncomps+1)], index=self._index)
         self._rsquared_acc = np.array(r2)
         self._explained_variance = np.diff(np.insert(self._rsquared_acc, 0, 0))
         self._residuals_fit = X-T.T@P_t
@@ -123,14 +165,18 @@ class PCA:
             The projected data
         '''
 
-        if isinstance(data, pd.DataFrame):
-            data = data.values
+        if not isinstance(data, pd.DataFrame):
+            raise ValueError(f'Data must be of type pandas DataFrame, not {type(data)}')
 
+        X_transform = data.copy()
+        # Descale and demean matrix
         if self._standardize:
-            data = self._scaler.transform(data)  
+            if self._numerical_features:
+                X_transform[self._numerical_features] = self._scaler.transform(X_transform[self._numerical_features])
+            else:
+                X_transform = pd.DataFrame(self._scaler.transform(X_transform), columns=self._variables, index=self._index)
 
-
-        self._scores_test = pd.DataFrame(data @ self._loadings.T, columns=self._scores.columns)
+        self._scores_test = pd.DataFrame(X_transform @ self._loadings.T, columns=self._scores.columns, index=data.index)
         
         return self._scores_test 
 
@@ -173,6 +219,29 @@ class PCA:
 
         return data @ self._loadings
     
+    def control_limits(self, alpha:float=0.95):
+        # Hotelling's T2 control limit. Phase I
+        dfn = self._ncomps/2
+        dfd = (self._nobs-self._ncomps-1)/2
+        const = ((self._nobs-1)**2)/self._nobs
+
+        self._hotelling_limit_p1 = beta.ppf(alpha, dfn, dfd)*const
+
+        # Hotelling's T2 control limit. Phase II
+        const = (self._ncomps * (self._nobs**2 -1)) / (self._nobs * (self._nobs - self._ncomps))
+        dfn = self._ncomps
+        dfd = self._nobs - self._ncomps
+
+        self._hotelling_limit_p2 = f.ppf(alpha, dfn, dfd)*const
+
+        # SPE control limit
+        b, nu = np.mean(self._spe), np.var(self._spe)
+        
+        df = (2*b**2)/nu
+        const = nu/(2*b)
+
+        self._spe_limit = chi2.ppf(alpha, df)*const
+    
     def hotelling_t2(self, alpha:float=0.95):
         '''
         Hotelling's T2 represents the estimated squared Mahalanobis distance from the center of the latent subspace
@@ -196,15 +265,10 @@ class PCA:
         Hotelling's T2 statistic for every observation.
         '''
 
-        dfn = self._ncomps/2
-        dfd = (self._nobs-self._ncomps-1)/2
-        const = ((self._nobs-1)**2)/self._nobs
-
         self._hotelling = np.array([np.sum((self._scores.values[i, :]**2)/self._eigenvals) 
                                     for i in range(self._nobs)])
-        self._hotelling_limit = beta.ppf(alpha, dfn, dfd)*const
         
-    def spe(self, alpha:float=0.95):
+    def spe(self):
         '''
         Represents the sum of squared prediction errors. The value is given by the expression 
         e^T_i * e_i, so the SPE statistic is the scalar product of the residuals vector of observation i
@@ -228,6 +292,14 @@ class PCA:
 
         '''
         
+        self._spe = np.array([self._residuals_fit[i, :].T@self._residuals_fit[i, :] for i in range(self._nobs)])
+
+    def spe_p2(self, alpha:float=0.95):
+        '''
+        Represents the sum of squared prediction errors. The value is given by the expression 
+        e^T_i * e_i, so the SPE statistic is the scalar product of the residuals vector of observation i
+        '''
+
         SPE = np.array([self._residuals_fit[i, :].T@self._residuals_fit[i, :] for i in range(self._nobs)])
 
         b, nu = np.mean(SPE), np.var(SPE)
@@ -236,7 +308,57 @@ class PCA:
         const = nu/(2*b)
 
         self._spe = SPE
-        self._spe_limit = chi2.ppf(alpha, df)*const
+        self._spe_limit_p1 = chi2.ppf(alpha, df)*const
+
+    def hotelling_t2_phase2(self, data):
+
+        if not isinstance(data, pd.DataFrame):
+            raise ValueError(f'Data must be of type pandas DataFrame, not {type(data)}')
+
+        X = data.copy()
+
+        # Descale and demean matrix
+        if self._standardize:
+            if self._numerical_features:
+                X[self._numerical_features] = self._scaler.transform(X[self._numerical_features])
+            else:
+                X = pd.DataFrame(self._scaler.transform(X), columns=self._variables, index=self._index)
+
+        X = X.values
+
+        T2 = np.array([np.sum((X[i, :] @ self._loadings.values)**2/self._eigenvals) for i in range(X.shape[0])])
+
+        return T2
+
+    def predict(self, X_predict):
+
+        if not isinstance(X_predict, pd.DataFrame):
+            raise ValueError(f'Data must be of type pandas DataFrame, not {type(X_predict)}')
+
+        if not hasattr(self, '_scores'):
+            raise ValueError("The model has not been fitted yet. Please use the fit method before predicting")
+        
+        predicted_scores = self.transform(X_predict)
+
+        X_transform = X_predict.copy()
+        
+        if self._standardize:
+            if self._numerical_features:
+                X_transform[self._numerical_features] = self._scaler.transform(X_transform[self._numerical_features])
+            else:
+                X_transform = pd.DataFrame(self._scaler.transform(X_transform), columns=self._variables, index=self._index)
+
+        # Hotelling's T2 statistic
+        self._hotelling_p2 = np.array([np.sum((predicted_scores.values[i, :]**2)/self._eigenvals) 
+                                    for i in range(predicted_scores.shape[0])])
+        
+        # SPE statistic
+        residuals = X_transform.values - predicted_scores.values @ self._loadings.values
+
+        self._spe_p2 = np.array([residuals[i, :].T@residuals[i, :] for i in range(predicted_scores.shape[0])])
+
+        return self._hotelling_p2, self._spe_p2
+
     '''
     PLOTS
     '''
@@ -284,7 +406,7 @@ class PCA:
             scatter = alt.Chart(scores).mark_point().encode(
                 x=f"PC_{comp1}:Q",
                 y=f"PC_{comp2}:Q",
-                tooltip=['index', f"PC_{comp1}", f"PC_{comp2}"]
+                tooltip=[self._index_name, f"PC_{comp1}", f"PC_{comp2}"]
             ).interactive()
 
         if plot_test:
@@ -292,7 +414,7 @@ class PCA:
             scatter_test = alt.Chart(scores_test).mark_point(color='black', opacity=.1).encode(
                 x=f"PC_{comp1}",
                 y=f"PC_{comp2}",
-                tooltip=['index', f"PC_{comp1}", f"PC_{comp2}"]
+                tooltip=[self._index_name, f"PC_{comp1}", f"PC_{comp2}"]
             ).interactive()
 
             return (scatter_test+ scatter + vline + hline)
@@ -332,7 +454,6 @@ class PCA:
         max_pc1 = self._scores[f'PC_{comp1}'].max()
         max_pc2 = self._scores[f'PC_{comp2}'].max()
         hypothenuse = (max_pc1**2 + max_pc2**2)**0.5
-        hypothenuse
 
         max_loadings1 = self._loadings.T[f'PC_{comp1}'].max()
         max_loadings2 = self._loadings.T[f'PC_{comp2}'].max()
@@ -355,7 +476,7 @@ class PCA:
             scores_plot = alt.Chart(scores.reset_index()).mark_circle().encode(
                 x=alt.X(f'PC_{comp1}',title=f'PC {comp1} - {self._explained_variance[comp1-1]*100:.2f} %'),
                 y=alt.Y(f'PC_{comp2}',title=f'PC {comp2} - {self._explained_variance[comp2-1]*100:.2f} %'),
-                tooltip=['index', f"PC_{comp1}", f"PC_{comp2}", hue.name],
+                tooltip=[self._index_name, f"PC_{comp1}", f"PC_{comp2}", hue.name],
                 color=alt.Color(hue.name)
             ).interactive()
 
@@ -363,7 +484,7 @@ class PCA:
             scores_plot = alt.Chart(scores.reset_index()).mark_circle().encode(
                 x=alt.X(f'PC_{comp1}',title=f'PC {comp1} - {self._explained_variance[comp1-1]*100:.2f} %'),
                 y=alt.Y(f'PC_{comp2}',title=f'PC {comp2} - {self._explained_variance[comp2-1]*100:.2f} %'),
-                tooltip=['index', f"PC_{comp1}", f"PC_{comp2}"]
+                tooltip=[self._index_name, f"PC_{comp1}", f"PC_{comp2}"]
             ).interactive()
 
         
@@ -381,7 +502,7 @@ class PCA:
             scatter_test = alt.Chart(scores_test).mark_point(color='black', opacity=.1).encode(
                 x=f"PC_{comp1}",
                 y=f"PC_{comp2}",
-                tooltip=['index', f"PC_{comp1}", f"PC_{comp2}"]
+                tooltip=[self._index_name, f"PC_{comp1}", f"PC_{comp2}"]
             ).interactive()
 
             return (scatter_test + scores_plot + loadings_plot + vline + hline)
@@ -415,7 +536,8 @@ class PCA:
             tooltip=['variable', f'PC_{comp}']
         ).interactive()
 
-    def difference_plot(self, obs:int):
+    def difference_plot(self, 
+                        X_obs:pd.Series,):   
         '''
         Generates a bar plot of the difference between a specific observation and the mean of the sample
 
@@ -428,21 +550,27 @@ class PCA:
         -------
         None
         '''
-        if obs < 0 or obs >= self._nobs:
-            raise ValueError("The observation number must be between 0 and the number of observations")
+        if not isinstance(X_obs, pd.DataFrame):
+            raise ValueError("The observation must be a pandas Series or a DataFrame")
+        
+        if sorted(X_obs.columns) != sorted(self._variables):
+            raise ValueError("The observation must have the same variables as the training data")
+                
+        if self._standardize:
+            if self._numerical_features:
+                X_obs[self._numerical_features] = self._scaler.transform(X_obs[self._numerical_features])
+            else:
+                X_obs = pd.DataFrame(self._scaler.transform(X_obs), columns=self._variables, index=X_obs._index)
 
-        standardized_observation = (self._processed_training_data[obs] - self._mean_train) / self._std_train
-
-        df_observation = pd.DataFrame({'variable': self._variables, 'value': standardized_observation})
-
+        df_plot = pd.DataFrame({'variable': self._variables, 'value': X_obs.values[0]})
         # Altair plot for the differences
-        return alt.Chart(df_observation).mark_bar().encode(
+        return alt.Chart(df_plot).mark_bar().encode(
             x=alt.X('variable', title='Variable'),
             y=alt.Y('value', title='Difference with respect to the mean (std)'),
             tooltip=['variable', 'value']
         ).interactive()
 
-    def hotelling_t2_plot(self, alpha:float=0.95):
+    def hotelling_t2_plot_p1(self):
         '''
         Generates a plot of the Hotelling's T2 statistic
 
@@ -455,9 +583,6 @@ class PCA:
         -------
         None
         '''
-        # if not hasattr(self, '_hotelling'):
-        self.hotelling_t2(alpha)
-
         hotelling = pd.DataFrame({'observation': range(self._nobs), 'T2': self._hotelling})
 
         hotelling_chart = alt.Chart(hotelling).mark_line().encode(
@@ -465,7 +590,7 @@ class PCA:
             y=alt.Y('T2', title="Hotelling's T2"),
             tooltip=['observation', "T2"],
         ).properties(
-            title=f'Hotelling\'s T2 statistic plot \n alpha: {alpha*100}% -- Threshold: {self._hotelling_limit:.2f}',
+            title=f'Hotelling\'s T2 statistic plot \n alpha: {self._alpha*100}% -- Threshold: {self._hotelling_limit_p1:.2f}',
         ).interactive()
 
         hotelling_chart.configure_title(
@@ -476,13 +601,49 @@ class PCA:
         )
 
         threshold = alt.Chart(
-                        pd.DataFrame({'y': [self._hotelling_limit]})).mark_rule(
+                        pd.DataFrame({'y': [self._hotelling_limit_p1]})).mark_rule(
                         strokeDash=[12, 6], color='red').encode(y='y')
 
         # Altair plot for the Hotelling's T2 statistic
         return (hotelling_chart + threshold)
     
-    def spe_plot(self, alpha:float=0.95):
+    def hotelling_t2_plot_p2(self):
+        '''
+        Generates a plot of the Hotelling's T2 statistic for Phase II
+
+        '''
+
+        n_obs = self._scores_test.shape[0]  
+
+        if not hasattr(self, '_hotelling_p2'):
+            raise ValueError("No test data has been projected onto the latent space. Please use the predict() method before plotting the test data")
+        
+        hotelling = pd.DataFrame({'observation': range(n_obs), 'T2': self._hotelling_p2})
+
+        hotelling_chart = alt.Chart(hotelling).mark_line().encode(
+            x=alt.X('observation', title='Observation'),
+            y=alt.Y('T2', title="Hotelling's T2"),
+            tooltip=['observation', "T2"],
+        ).properties(
+            title=f'Hotelling\'s T2 statistic plot \n alpha: {self._alpha*100}% -- Threshold: {self._hotelling_limit_p2:.2f}',
+        ).interactive()
+
+        hotelling_chart.configure_title(
+            fontSize=20,
+            font='Courier',
+            anchor='start',
+            color='gray'
+        )
+
+        threshold = alt.Chart(
+                        pd.DataFrame({'y': [self._hotelling_limit_p2]})).mark_rule(
+                        strokeDash=[12, 6], color='red').encode(y='y')
+
+        # Altair plot for the Hotelling's T2 statistic
+        return (hotelling_chart + threshold)
+
+    
+    def spe_plot_p1(self):
         '''
         Generates a plot of the SPE statistic
 
@@ -495,9 +656,6 @@ class PCA:
         -------
         None
         '''
-        # if not hasattr(self, '_spe'):
-        self.spe(alpha)
-
         spe = pd.DataFrame({'observation': range(self._nobs), 'SPE': self._spe})
 
         spe_chart = alt.Chart(spe).mark_line().encode(
@@ -505,7 +663,46 @@ class PCA:
             y=alt.Y('SPE', title='SPE'),
             tooltip=['observation', "SPE"],
         ).properties(
-            title=f'SPE statistic plot \n alpha: {alpha*100}% -- Threshold: {self._spe_limit:.2f}',
+            title=f'SPE statistic plot \n alpha: {self._alpha*100}% -- Threshold: {self._spe_limit:.2f}',
+        ).interactive()
+
+        spe_chart.configure_title(
+            fontSize=20,
+            font='Courier',
+            anchor='start',
+            color='gray'
+        )
+
+        threshold = alt.Chart(
+                        pd.DataFrame({'y': [self._spe_limit]})).mark_rule(
+                        strokeDash=[12, 6], color='red').encode(y='y')
+
+        # Altair plot for the SPE statistic
+        return (spe_chart + threshold)
+    
+    def spe_plot_p2(self):
+        '''
+        Generates a plot of the SPE statistic
+
+        Parameters
+        ----------
+        alpha : float
+            Type I error. 1-alpha is the probability of rejecting a true null hypothesis.
+
+        Returns
+        -------
+        None
+        '''
+
+        nobs = self._scores_test.shape[0]
+        spe = pd.DataFrame({'observation': range(nobs), 'SPE': self._spe_p2})
+
+        spe_chart = alt.Chart(spe).mark_line().encode(
+            x=alt.X('observation', title='Observation'),
+            y=alt.Y('SPE', title='SPE'),
+            tooltip=['observation', "SPE"],
+        ).properties(
+            title=f'SPE statistic plot \n alpha: {self._alpha*100}% -- Threshold: {self._spe_limit:.2f}',
         ).interactive()
 
         spe_chart.configure_title(
@@ -607,292 +804,3 @@ class PCA:
         ).properties(
             title=f'Contribution to the Hotelling\'s T2 of observation {obs} - T2: {self._hotelling[obs]:.2f} - Comp: {max_comp}'
         ).interactive()
-    
-
-
-# class PCR(PCA):
-#     def __init__(self, X, ncomps, autoescalado = True, tolerancia = 1e-15, verbose = False):
-#         PCA.__init__(self, X, ncomps, autoescalado = True, tolerancia = 1e-15, verbose = False)
-#         self.rsquared_fit = None
-#         self.rsquared_pred = None
-#         self.coefs = None
-#         self.ssr_fit = None
-#         self.press = None
-#         self.prediction = None
-    
-    
-#     def fit(self, y_train):
-        
-#         self.y_train = y_train
-#         y_train = np.asarray(y_train)
-        
-#         r2_PCR = []
-#         T_PCR, P_PCR = self.scores, self.loadings
-        
-#         X_train = self.X
-
-#         b = np.linalg.inv(np.transpose(T_PCR).dot(T_PCR)).dot(np.transpose(T_PCR)).dot(y_train)
-        
-#         B_PCR = np.transpose(P_PCR).dot(b)
-        
-#         y_hat_PCR = X_train.dot(B_PCR)
-        
-#         r2_PCR = 100*(1- np.sum((y_train-y_hat_PCR)**2)/np.sum((y_train-np.mean(y))**2))
-    
-#         self.rsquared_fit = r2_PCR
-#         self.coefs = B_PCR
-#         self.ssr_fit = np.sum((y_train-y_hat_PCR)**2)
-        
-#     def predict(self, X_test, y_test):
-        
-#         B_PCR = self.coefs
-        
-#         y_prediction = X_test.dot(B_PCR)
-        
-#         self.prediction = y_prediction
-#         r2_pred = 100*(1- np.sum((y_test-y_prediction)**2)/np.sum((y_test-np.mean(y_test))**2))
-#         self.rsquared_pred = r2_pred
-#         self.press = np.sum((y_prediction-y_test)**2)
-
-# class PLS(object):
-#     def __init__(self, X,y,ncomps, tol=1e-15, autoescalado=True):
-        
-#         self.X = np.asarray(X)
-#         self.y = np.asarray(y)
-#         self._ncomps = ncomps
-#         self._autoesc = autoescalado
-#         self._tolerancia = tol
-#         self._nobs, self._nvars = self.X.shape
-        
-#         self.T = None
-#         self.P_t = None
-#         self.U = None
-#         self.C_t = None
-#         self.W = None
-        
-#         self.rsquare_X = None
-#         self.rsquare_y = None
-        
-        
-#     def nipals(self, X, y, n_componentes, autoesc=True):
-#         X_original = self.X
-#         X = self.X
-        
-#         y_original = self.y
-#         y=self.y
-        
-#         dif = self._tolerancia
-            
-        
-#         #Establecemos la posibilidad de autoescalar. Por defecto, la función autoescalará
-#         if self._autoesc==True:
-#             for i in range(X.shape[1]):
-#                 X[:,i]= X[:,i]-np.mean(X[:,i])
-#                 X[:,i]= X[:,i]/np.std(X[:,i])
-                
-#             for i in range(y.shape[1]):   
-#                 y[:,i]= y[:,i]-np.mean(y[:,i])
-#                 y[:,i]= y[:,i]/np.std(y[:,i])
-        
-        
-#         if not 0 < self._tolerancia < 1:
-#             raise ValueError('Tolerance must be strictly between 0 and 1')
-                
-#         print("********* Algoritmo NIPALS para PLS ***********")
-#         #Inicializamos las matrices de scores y de loadings según el número de componentes propuesto
-#         r2_X = []
-#         T = np.zeros(shape=(self._ncomps, X.shape[0]))
-#         P_t = np.zeros(shape = (self._ncomps, X.shape[1]))
-        
-#         r2_y = []
-#         U = np.zeros(shape=(self._ncomps, y.shape[0]))
-#         C_t = np.zeros(shape = (self._ncomps, y.shape[1]))
-        
-#         W_t = np.zeros(shape = (self._ncomps, y.shape[1]))
-        
-        
-#         for i in range(self._ncomps):
-            
-#             #Iniciamos u como la primera columna de Y
-#             u = np.array(y[:,0])
-#             u.shape=(y.shape[0], 1) #Esto sirve para obligar a que t sea un vector columna
-            
-#             cont=0
-#             conv=0
-            
-#             while conv<y.shape[0]:
-#                 u_previo = u
-#                 w_t = (np.transpose(u_previo).dot(X))/(np.transpose(u_previo).dot(u_previo))
-#                 w_t = w_t/LA.norm(w_t)
-                
-#                 t=X.dot(np.transpose(w_t))
-                
-#                 c_t = np.transpose(t).dot(y)/(np.transpose(t).dot(t))
-                
-#                 u = y.dot(np.transpose(c_t))/(c_t.dot(np.transpose(c_t)))
-#                 conv = np.sum((u-u_previo)<dif)
-#                 cont+=1
-                
-#             p_t=np.transpose(t).dot(X)/(np.transpose(t).dot(t))
-            
-#             print("Componente ", i+1, " converge en ", cont, " iteraciones")
-#             E = X-t.dot(p_t)
-#             F=y-t.dot(c_t)
-            
-#             r2_X.append(1-np.sum(E**2)/np.sum(X_original**2))
-#             r2_y.append(1-np.sum(F**2)/np.sum(y_original**2))
-            
-#             X=E
-#             Y=F
-            
-#             T[i]=t.reshape((X.shape[0]))
-#             P_t[i]=p_t
-            
-#             U[i]=u.reshape((X.shape[0]))
-#             C_t[i]=c_t
-            
-#             W_t[i]= w_t
-            
-#         T = np.transpose(T)
-#         U = np.transpose(U)
-        
-#         self.T = T
-#         self.P_t = P_t
-#         self.U = U
-#         self.C_t = C_t
-#         self.W = W_t
-        
-#         self.rsquare_X = r2_X
-#         self.rsquare_y = r2_Y
-    
-
-# def optimize_SPE(X_train, ncomps, alpha, threshold, iterations=500, tol=1e-15):
-#     limit_SPE=1000
-#     highest=1000
-#     tam = X_train.shape[0]
-    
-#     while highest > 0:
-#         model = PCA(tolerancia=tol)
-#         model.fit(X_train, ncomps)
-            
-#         T = model.scores
-#         P_t = model.loadings
-#         E=X_train-T.dot(P_t)
-                
-#         obs = X_train.shape[0]
-    
-#         spe = np.array([np.transpose(E[i,:]).dot(E[i,:]) for i in range(E.shape[0])])
-#         b = np.mean(spe)
-#         nu = np.var(spe)
-    
-#         ucl_SPE = nu/(2*b)*chi2.ppf(alpha, (2*b**2)/nu)
-        
-#         greater = []
-#         for k in range(obs):
-#             if spe[k]>threshold*ucl_SPE:
-#                 greater.append(k)
-                
-#         if max(spe)>threshold*ucl_SPE:
-#             X_train = np.delete(X_train,np.where(spe ==max(spe)),0)
-    
-#         highest = len(greater) 
-    
-    
-#     while limit_SPE > (1-alpha)*tam:
-
-        
-#         model = PCA(tolerancia=tol)
-#         model.fit(X_train, ncomps)
-        
-#         T = model.scores
-#         P_t = model.loadings
-#         E=X_train-T.dot(P_t)
-                
-#         obs = X_train.shape[0]
-
-#         spe = np.array([np.transpose(E[i,:]).dot(E[i,:]) for i in range(E.shape[0])])
-#         b = np.mean(spe)
-#         nu = np.var(spe)
-    
-#         ucl_SPE = nu/(2*b)*chi2.ppf(alpha, (2*b**2)/nu)
-        
-#         greater = []
-#         for k in range(obs):
-#             if spe[k]>ucl_SPE:
-#                 greater.append(k)
-                
-#         if max(spe)>ucl_SPE:
-#                 k = np.where(spe ==max(spe))
-#                 X_train = np.delete(X_train, k, 0)      
-                
-#         limit_SPE= len(greater)
-
-#     model= PCA(tolerancia = tol, autoescalado = False)
-#     X_opt = X_train
-#     model.fit(X_opt, ncomps)    
-#     return(X_opt, model)
-    
-# def optimize_T2(X_train, ncomps, alpha, threshold, iterations=10, tol=1e-15):
-#     limit_T2=1000
-#     tam = X_train.shape[0]
-#     highest = 1000
-    
-#     while highest > 0:
-#         model = PCA(tolerancia=tol)
-#         model.fit(X_train, ncomps)
-            
-#         T = model.scores
-#         P_t = model.loadings
-                
-#         obs = X_train.shape[0]
-        
-#         dfn = ncomps/2
-#         dfd = (obs-ncomps-1)/2
-#         const = ((obs-1)**2)/obs
-#         tau = np.array([np.sum(((T[i])**2)/np.var(T[i])) for i in range(obs)])
-    
-#         ucl_T2 = (beta.ppf(alpha, dfn, dfd))*const
-        
-#         greater = []
-#         for k in range(obs):
-#             if tau[k]>threshold*ucl_T2:
-#                 greater.append(k)
-                
-#         if max(tau)>threshold*ucl_T2:
-#             X_train = np.delete(X_train,np.where(tau ==max(tau)),0)
-    
-#         highest = len(greater)
-
-#     while limit_T2 > (1-alpha)*tam:
-        
-#         model = PCA(tolerancia = tol)
-#         model.fit(X_train, ncomps)
-        
-#         T = model.scores
-        
-#         obs = X_train.shape[0]
-        
-#         dfn = ncomps/2
-#         dfd = (obs-ncomps-1)/2
-#         const = ((obs-1)**2)/obs
-#         tau = np.array([np.sum(((T[i])**2)/np.var(T[i])) for i in range(obs)])
-    
-#         ucl_T2 = (beta.ppf(alpha, dfn, dfd))*const
-        
-#         greater = []
-#         for k in range(X_train.shape[0]):
-#             if tau[k]>ucl_T2:
-#                 greater.append(k)
-                
-#         if max(tau)>ucl_T2:
-#                 l = np.where(tau ==max(tau))
-#                 X_train = np.delete(X_train, l, 0)
-
-#         limit_T2= len(greater)
-        
-
-#     model= PCA(tolerancia = tol, autoescalado = False)
-#     X_opt = X_train
-#     model.fit(X_opt, ncomps)
-    
-#     return(X_opt, model)

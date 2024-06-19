@@ -82,6 +82,15 @@ def nipals(X, ncomps, threshold=1e-5, demean=True, standardize=True, verbose=Tru
     
     return T, P_t, E, r2, explained_variance, eigenvalues
 
+# def standardize(numerical_features=[], scaler=None):
+#     if scaler is None:
+#         scaler = StandardScaler()
+#         numerical_features = scaler.fit_transform(numerical_features)
+#     else:
+#         numerical_features = scaler.transform(numerical_features)
+#     return numerical_features, scaler
+
+
 # def optimize_T2(X, ncomps, alpha, df_metadatos, threshold=3):
     
 #     X_opt = X.copy()
