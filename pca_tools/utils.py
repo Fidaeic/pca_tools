@@ -8,186 +8,112 @@ Created on Sat Jul 31 09:40:07 2021
 
 import numpy as np
 from numpy import linalg as LA
+from scipy.stats import f, beta, chi2
+from .model import PCA
+import pandas as pd
+import logging
 
+def optimize(X, n_comps, alpha, numerical_features, statistic='T2', threshold=3):
+    """
+    This function optimizes a dataset for PCA by iteratively removing out-of-control observations.
 
-def nipals(X, ncomps, threshold=1e-5, demean=True, standardize=True, verbose=True, max_iterations=10000):
-  
-    X_pca = X.copy()
+    Parameters
+    ----------
+    X : pd.DataFrame
+        The input data to be optimized.
+    n_comps : int
+        The number of principal components to use in the PCA.
+    alpha : float
+        The significance level for the control limits. Must be between 0 and 1.
+    numerical_features : list
+        The list of numerical features to be considered in the PCA.
+    statistic : str, optional
+        The statistic to use for determining out-of-control observations. Must be either 'T2' for Hotelling's T^2 or 'SPE' for Squared Prediction Error. Default is 'T2'.
+    threshold : float, optional
+        The threshold for determining out-of-control observations. Observations with a statistic value greater than threshold times the control limit are considered out-of-control. Default is 3.
 
-    if demean:
-        mean = np.mean(X, axis=0)
-        X_pca = X_pca-mean[None, :]
-        
-    if standardize:
-        std = np.std(X, axis=0)
-        X_pca = X_pca/std[None, :]
+    Returns
+    -------
+    X_opt : pd.DataFrame
+        The optimized input data with out-of-control observations removed.
 
+    Raises
+    ------
+    ValueError
+        If `statistic` is not 'T2' or 'SPE', `alpha` is not between 0 and 1, `threshold` is not positive, `n_comps` is not greater than 0, `numerical_features` is not a list, or `X` is not a pandas DataFrame.
+    """
 
-    tss = np.sum(X_pca**2)
+    # Set up logging
+    logging.basicConfig(level=logging.INFO)
+
+    # Validate inputs
+    if statistic not in ['T2', 'SPE']:
+        raise ValueError("Statistic must be 'T2' or 'SPE'")
     
-    r2 = []
-    explained_variance = []
-    T = np.zeros(shape=(ncomps, X_pca.shape[0]))
-    P_t = np.zeros(shape = (ncomps, X_pca.shape[1]))
-    eigenvalues= np.zeros(ncomps)
+    if alpha<0 or alpha>1:
+        raise ValueError("Alpha must be between 0 and 1")
+    
+    if threshold<0:
+        raise ValueError("Threshold must be positive")
+    
+    if n_comps<1:
+        raise ValueError("Number of components must be greater than 0")
+    
+    if not isinstance(numerical_features, list):
+        raise ValueError("Numerical features must be a list")
+    
+    if not isinstance(X, pd.DataFrame):
+        raise ValueError("X must be a pandas DataFrame")
 
-    for i in range(ncomps):
-        # We get the column with the maximum variance in the matrix
-        var = np.var(X_pca, axis=0)
-        pos = np.where(max(var))[0]
-        
-        # That column will be the one we will start with
-        t = np.array(X_pca[:,pos])
-        t.shape=(X_pca.shape[0], 1) #Esto sirve para obligar a que t sea un vector columna
-    
-        cont=0
-        comprobacion = 1
-        # while conv <X_pca.shape[0] and cont<10000:
-        while comprobacion>threshold and cont<max_iterations:
-            
-            #Definimos un vector llamado t_previo, que es con el que vamos a empezar el algoritmo
-            t_previo = t
-            p_t = (np.transpose(t_previo).dot(X_pca))/(np.transpose(t_previo).dot(t_previo))
-            p_t = p_t/LA.norm(p_t)
-            
-            t=X_pca.dot(np.transpose(p_t))
-            
-            #Comparamos el t calcular con el t_previo, de manera que lo que buscamos es que la diferencia sea menor
-            #que el criterio de parada establecido. Para ello, hacemos una prueba lógica y sumamos todos los valores
-            #donde sea verdad. Si es verdad en todos, el algoritmo ha convergido
-            
-            t_sum = np.sum(t**2)
-            t_previo_sum = np.sum(t_previo**2)
-            
-            comprobacion = np.abs(np.sqrt(t_sum-t_previo_sum))
-            
-            cont+=1
+    # Initialize variables
+    keep_indices = np.arange(X.shape[0])
 
-        #Calculamos la matriz de residuos y se la asignamos a X para calcular la siguiente componente
-        E = X_pca-t.dot(p_t)
-        r2.append(1-np.sum(E**2)/tss)
-        explained_variance.append(r2[i] - r2[i-1]) if i!=0 else explained_variance.append(r2[i])
-        X_pca = E
-        
-        #Asignamos los vectores t y p a su posición en las matrices de scores y loadings
-        eigenvalues[i] = np.var(t)
-        
-        T[i]=t.reshape((X.shape[0]))
-        P_t[i]=p_t
-        
-    if verbose:
-        print(f"Algorithm converged in {cont} iterations")
-    T = np.transpose(T)
-    
-    
-    return T, P_t, E, r2, explained_variance, eigenvalues
+    # Train PCA model
+    pca = PCA(n_comps=n_comps)
+    pca.train(X, numerical_features=numerical_features, alpha=alpha)
 
-# def standardize(numerical_features=[], scaler=None):
-#     if scaler is None:
-#         scaler = StandardScaler()
-#         numerical_features = scaler.fit_transform(numerical_features)
-#     else:
-#         numerical_features = scaler.transform(numerical_features)
-#     return numerical_features, scaler
+    # Determine control limit and statistic value based on statistic
+    if statistic == 'T2':
+        control_limit = pca._hotelling_limit_p1
+        statistic_value = pca._hotelling
+    else:
+        control_limit = pca._spe_limit
+        statistic_value = pca._spe
 
+    # Calculate proportion of out-of-control observations
+    out_of_control = np.sum(statistic_value > control_limit) / len(keep_indices)
 
-# def optimize_T2(X, ncomps, alpha, df_metadatos, threshold=3):
-    
-#     X_opt = X.copy()
-#     tam = X.shape[0]
-#     fuera_control = tam
-#     pos_elim = np.array([])
-#     df_meta = df_metadatos.copy()
+    # Iteratively remove out-of-control observations
+    while out_of_control > (1 - alpha):
+        # Identify out-of-control observations
+        drop_indices = np.where(statistic_value > threshold * control_limit)[0]
 
-#     umbral = int(tam*(1-alpha))
-    
-#     while fuera_control > threshold*umbral:
-#         pca = miPCA(ncomps)
-#         pca.calcular(X_opt)
-        
-#         T = pca._scores
-#         lam_a = pca._eigenvals
-#         obs = X_opt.shape[0]
-        
-#         dfn = ncomps/2
-#         dfd = (obs-ncomps-1)/2
-#         const = ((obs-1)**2)/obs
-    
-#         T_2 = []
-#         for i in range(T.shape[0]):
-#             t2 = 0
-#             z = T[i, :]
-#             t2 = np.sum((z**2)/lam_a)
-#             T_2.append(t2)
-            
-#         T_2 = np.array(T_2)
-#         t_lim = (beta.ppf(alpha, dfn, dfd))*const
-        
-#         # pos_max = np.argmax(T_2)
-        
-#         fuera_control = np.sum(T_2>t_lim)
-#         umbral = int(tam*(1-alpha))
-#         eliminar = int(alpha*(fuera_control-umbral))
-        
-#         pos_max = T_2.argsort()[-eliminar:][::-1]
-#         pos_elim = np.append(pos_elim, pos_max)
-#         X_opt = np.delete(X_opt, pos_max, 0)
-#         df_meta.drop(pos_max, axis=0, inplace=True)
-#         df_meta = df_meta.reset_index(drop=True)
-        
-        
-#         tam = X_opt.shape[0]
-        
-#         print("#######################################")
-#         print(len(pos_elim), " Elementos eliminados")
-#         print("Fuera de control:", fuera_control)
-#         print("Umbral: ", threshold*umbral)
-#         print("Límite de control: ", t_lim)
+        # If no observations to drop, break the loop
+        if len(drop_indices) == 0:
+            break
 
-#     model = miPCA(ncomps, autoesc=True)
-#     model.calcular(X_opt)
-#     model.hotelling(alpha)
-    
-#     t_lim = model._hotelling_limit
-#     T2 = model._hotelling
-#     return X_opt, model, T2, t_lim, pos_elim, df_meta
+        # Remove out-of-control observations
+        keep_indices = np.delete(keep_indices, drop_indices)
 
-# def optimize_SPE(X, ncomps, alpha, df_metadatos, threshold=1.5):
-    
-#     X_opt = X.copy()
-#     tam = X.shape[0]
-#     fuera_control = tam
-#     pos_elim = []
-#     df_meta = df_metadatos.copy()
- 
+        # Retrain PCA model
+        pca.train(X.iloc[keep_indices], numerical_features=numerical_features, alpha=alpha)
 
-#     umbral = int(tam*(1-alpha))
-    
-#     while fuera_control>threshold*umbral:
-#         pca = miPCA(ncomps)
-#         pca.calcular(X_opt)
-#         pca.spe(alpha)
-#         spe = pca._spe
-    
-#         b = np.mean(spe)
-#         nu = np.var(spe)
-        
-#         df = (2*b**2)/nu
-#         const = nu/(2*b)
-        
-#         spe_lim = chi2.ppf(alpha, df)*const
-        
-#         pos_max = np.argmax(spe)
-#         pos_elim.append(pos_max)
-#         X_opt = np.delete(X_opt, pos_max, 0)
-#         df_meta.drop(pos_max, axis=0, inplace=True)
-#         df_meta = df_meta.reset_index(drop=True)
-        
-#         fuera_control = np.sum(spe>spe_lim)
-#         tam = X_opt.shape[0]
-#         umbral = int(tam*(1-alpha))
-#         print("#######################################")
-#         print(len(pos_elim), " Elementos eliminados")
-#         print("Fuera de control:", fuera_control)
-#         print("Umbral: ", threshold*umbral)
-#         print("Límite de control: ", spe_lim)
+        # Recalculate control limit and statistic value
+        if statistic == 'T2':
+            control_limit = pca._hotelling_limit_p1
+            statistic_value = pca._hotelling
+        else:
+            control_limit = pca._spe_limit
+            statistic_value = pca._spe
+
+        # Calculate proportion of out-of-control observations
+        out_of_control = np.sum(statistic_value > control_limit) / len(keep_indices)
+
+        # Log progress
+        logging.info(f'Processing statistics: {statistic}')
+        logging.info(f"{len(drop_indices)} removed observations")
+        logging.info(f"Proportion of out of control observations: {out_of_control}")
+        logging.info(f"Control limit: {control_limit}")
+
+    # Return optimized data
+    return X.iloc[keep_indices]

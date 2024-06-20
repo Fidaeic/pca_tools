@@ -11,7 +11,7 @@ from scipy.stats import f, beta, chi2
 import altair as alt
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.preprocessing import StandardScaler
 
 class PCA:
     def __init__(self, n_comps=None, standardize=True, tolerance=1e-4, verbose=False):
