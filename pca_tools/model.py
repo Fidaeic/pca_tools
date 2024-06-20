@@ -357,7 +357,7 @@ class PCA:
 
         self._spe_p2 = np.array([residuals[i, :].T@residuals[i, :] for i in range(predicted_scores.shape[0])])
 
-        return self._hotelling_p2, self._spe_p2
+        return self._hotelling_p2, self._spe_p2, residuals, predicted_scores
 
     '''
     PLOTS
@@ -743,64 +743,4 @@ class PCA:
             tooltip=['variable', 'residual']
         ).properties(
             title=f'Residuals for observation {obs} - SPE: {self._spe[obs]:.2f}'
-        ).interactive()
-    
-    def spe_contribution_plot(self, obs:int):
-        '''
-        Generates a bar plot of the contribution of each variable to the SPE statistic of the selected observation
-
-        Parameters
-        ----------
-        obs : int
-            The number of the observation.
-
-        Returns
-        -------
-        None
-        '''
-        if obs < 0 or obs >= self._nobs:
-            raise ValueError("The observation number must be between 0 and the number of observations")
-
-        residuals = self._residuals_fit[obs]**2
-        residuals = pd.DataFrame({'variable': self._variables, 'contribution': residuals})
-
-        # Altair plot for the residuals
-        return alt.Chart(residuals).mark_bar().encode(
-            x=alt.X('variable', title='Variable'),
-            y=alt.Y('contribution', title='Contribution'),
-            tooltip=['variable', 'contribution']
-        ).properties(
-            title=f'Contribution to the SPE of observation {obs} - SPE: {self._spe[obs]:.2f}'
-        ).interactive()
-    
-    def hotelling_t2_contribution_plot(self, obs:int):
-        '''
-        Generates a bar plot of the contribution of each variable to the Hotelling's T2 statistic of the selected observation
-
-        Parameters
-        ----------
-        obs : int
-            The number of the observation.
-
-        Returns
-        -------
-        None
-        '''
-        if obs < 0 or obs >= self._nobs:
-            raise ValueError("The observation number must be between 0 and the number of observations")
-
-        contributions = (self._loadings.values*self._processed_training_data[obs])
-        normalized_contributions = (contributions/self._eigenvals[:, None])**2
-
-        max_comp = np.argmax(np.sum(normalized_contributions, axis=1))
-
-        contributions_df = pd.DataFrame({'variable': self._variables, 'contribution': contributions[max_comp]})
-
-        # Altair plot for the residuals
-        return alt.Chart(contributions_df).mark_bar().encode(
-            x=alt.X('variable', title='Variable'),
-            y=alt.Y('contribution', title='Contribution'),
-            tooltip=['variable', 'contribution']
-        ).properties(
-            title=f'Contribution to the Hotelling\'s T2 of observation {obs} - T2: {self._hotelling[obs]:.2f} - Comp: {max_comp}'
         ).interactive()

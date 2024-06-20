@@ -9,9 +9,11 @@ Created on Sat Jul 31 09:40:07 2021
 import numpy as np
 from numpy import linalg as LA
 from scipy.stats import f, beta, chi2
+import copy
 from .model import PCA
 import pandas as pd
 import logging
+import altair as alt
 
 def optimize(X, n_comps, alpha, numerical_features, statistic='T2', threshold=3):
     """
@@ -117,3 +119,132 @@ def optimize(X, n_comps, alpha, numerical_features, statistic='T2', threshold=3)
 
     # Return optimized data
     return X.iloc[keep_indices]
+
+def spe_contribution_plot(pca_model, observation):
+
+    '''
+    Generates a bar plot of the contribution of each variable to the SPE statistic of the selected observation
+
+    Parameters
+    ----------
+    obs : int
+        The number of the observation.
+
+    Returns
+    -------
+    None
+    '''
+    # if obs < 0 or obs >= self._nobs:
+    #     raise ValueError("The observation number must be between 0 and the number of observations")
+
+    # Calculate the residuals based on the model
+    if not isinstance(observation, pd.DataFrame):
+            raise ValueError(f'Data must be of type pandas DataFrame, not {type(observation)}')
+    
+    if observation.shape[1] != len(pca_model._variables):
+        raise ValueError(f'Number of features in data must be {len(pca_model._variables)}')
+    
+    if observation.shape[0] != 1:
+        raise ValueError(f'Number of observations in data must be 1')
+    
+    pca_copy = copy.deepcopy(pca_model)
+
+    _, SPE, residuals, _ = pca_copy.predict(observation)
+
+    residuals = pd.DataFrame({'variable': pca_copy._variables, 'contribution': residuals[0]**2})
+
+    # Altair plot for the residuals
+    return alt.Chart(residuals).mark_bar().encode(
+        x=alt.X('variable', title='Variable'),
+        y=alt.Y('contribution', title='Contribution'),
+        tooltip=['variable', 'contribution']
+    ).properties(
+        title=f'Contribution to the SPE for the observation: {str(observation.index.values[0])} - SPE: {SPE[0]:.2f}'
+    ).interactive()
+
+def hotelling_t2_contribution_plot(pca_model, observation):
+    '''
+    Generates a bar plot of the contribution of each variable to the Hotelling's T2 statistic of the selected observation
+
+    Parameters
+    ----------
+    obs : int
+        The number of the observation.
+
+    Returns
+    -------
+    None
+    '''
+    if not isinstance(observation, pd.DataFrame):
+            raise ValueError(f'Data must be of type pandas DataFrame, not {type(observation)}')
+    
+    if observation.shape[1] != len(pca_model._variables):
+        raise ValueError(f'Number of features in data must be {len(pca_model._variables)}')
+    
+    if observation.shape[0] != 1:
+        raise ValueError(f'Number of observations in data must be 1')
+    
+    pca_copy = copy.deepcopy(pca_model)
+
+    hotelling, _, _, _ = pca_copy.predict(observation)
+
+    X_transform = observation.copy()
+
+    if pca_copy._standardize:
+        if pca_copy._numerical_features:
+            X_transform[pca_copy._numerical_features] = pca_copy._scaler.transform(X_transform[pca_copy._numerical_features])
+        else:
+            X_transform = pd.DataFrame(pca_copy._scaler.transform(X_transform), columns=pca_copy._variables, index=pca_copy._index)
+    
+    contributions = (pca_copy._loadings.values*X_transform.values)
+    normalized_contributions = (contributions/pca_copy._eigenvals[:, None])**2
+
+    max_comp = np.argmax(np.sum(normalized_contributions, axis=1))
+
+    contributions_df = pd.DataFrame({'variable': pca_copy._variables, 'contribution': contributions[max_comp]})
+
+    # Altair plot for the residuals
+    return alt.Chart(contributions_df).mark_bar().encode(
+        x=alt.X('variable', title='Variable'),
+        y=alt.Y('contribution', title='Contribution'),
+        tooltip=['variable', 'contribution']
+    ).properties(
+        title=f'Contribution to the Hotelling\'s T2 of observation {str(observation.index.values[0])} - \n T2: {hotelling[0]:.2f} - Comp: {max_comp}'
+    ).interactive()
+
+
+def is_anomaly(pca_model, df_obs):
+
+    pca_copy = copy.deepcopy(pca_model)
+
+    hotelling, SPE, _, _ = pca_copy.predict(df_obs)
+
+    # Hotelling's T2 control limit. Phase II
+    dfn = pca_copy._ncomps
+    dfd = pca_copy._nobs - pca_copy._ncomps
+    const = (pca_copy._ncomps * (pca_copy._nobs**2 -1)) / (pca_copy._nobs * (pca_copy._nobs - pca_copy._ncomps))
+
+    prob_hotelling = 1-f.cdf(hotelling/const, dfn, dfd)
+
+    # SPE control limit. Phase II
+    b, nu = np.mean(pca_copy._spe), np.var(pca_copy._spe)
+        
+    df = (2*b**2)/nu
+    const = nu/(2*b)
+
+    prob_spe = 1-chi2.cdf(SPE/const, df)
+
+    if SPE <= pca_copy._spe_limit and hotelling <= pca_copy._hotelling_limit_p2:
+        print("No anomaly detected.")
+
+    if SPE > pca_copy._spe_limit:
+        print("Moderate outlier detected.")
+        print("SPE: ", SPE)
+        print("SPE limit: ", pca_copy._spe_limit)
+        print("Probability of observing this event: ", prob_spe)
+    
+    if hotelling > pca_copy._hotelling_limit_p2:
+        print("Severe outlier detected.")
+        print("Hotelling T2: ", hotelling)
+        print("Hotelling T2 limit: ", pca_copy._hotelling_limit_p2)
+        print("Probability of observing this event: ", prob_hotelling)
