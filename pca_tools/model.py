@@ -175,10 +175,8 @@ class PCA:
                 X_transform[self._numerical_features] = self._scaler.transform(X_transform[self._numerical_features])
             else:
                 X_transform = pd.DataFrame(self._scaler.transform(X_transform), columns=self._variables, index=self._index)
-
-        self._scores_test = pd.DataFrame(X_transform @ self._loadings.T, columns=self._scores.columns, index=data.index)
         
-        return self._scores_test 
+        return pd.DataFrame(X_transform @ self._loadings.T, columns=self._scores.columns, index=data.index)
 
     def fit_transform(self, data, y=None):
         '''
@@ -242,7 +240,7 @@ class PCA:
 
         self._spe_limit = chi2.ppf(alpha, df)*const
     
-    def hotelling_t2(self, alpha:float=0.95):
+    def hotelling_t2(self):
         '''
         Hotelling's T2 represents the estimated squared Mahalanobis distance from the center of the latent subspace
         to the projection of an observation onto this subspace (Ferrer, 2014).
@@ -349,20 +347,70 @@ class PCA:
                 X_transform = pd.DataFrame(self._scaler.transform(X_transform), columns=self._variables, index=self._index)
 
         # Hotelling's T2 statistic
-        self._hotelling_p2 = np.array([np.sum((predicted_scores.values[i, :]**2)/self._eigenvals) 
+        hotelling_p2 = np.array([np.sum((predicted_scores.values[i, :]**2)/self._eigenvals) 
                                     for i in range(predicted_scores.shape[0])])
         
         # SPE statistic
         residuals = X_transform.values - predicted_scores.values @ self._loadings.values
 
-        self._spe_p2 = np.array([residuals[i, :].T@residuals[i, :] for i in range(predicted_scores.shape[0])])
+        spe_p2 = np.array([residuals[i, :].T@residuals[i, :] for i in range(predicted_scores.shape[0])])
 
-        return self._hotelling_p2, self._spe_p2, residuals, predicted_scores
+        return hotelling_p2, spe_p2, residuals, predicted_scores
+    
+    def response(self, X_predict):
+        '''
+        Predicts the probability of an observation being an outlier
+
+        Parameters
+        ----------
+        X_predict : array-like, shape (n_samples, n_features)
+            The data to be predicted
+
+        Returns
+        -------
+        array-like, shape (n_samples, 1)
+            The probability of an observation being an outlier
+        '''
+        hotelling, SPE, _, _ = self.predict(X_predict)
+
+        # Hotelling's T2 control limit. Phase II
+        dfn = self._ncomps
+        dfd = self._nobs - self._ncomps
+        const = (self._ncomps * (self._nobs**2 -1)) / (self._nobs * (self._nobs - self._ncomps))
+        prob_hotelling = 1-f.cdf(hotelling/const, dfn, dfd)
+
+        # SPE control limit. Phase II
+        b, nu = np.mean(self._spe), np.var(self._spe)
+            
+        df = (2*b**2)/nu
+        const = nu/(2*b)
+
+        prob_spe = 1-chi2.cdf(SPE/const, df)
+
+        spe_outlier = SPE >= self._spe_limit
+        hotelling_outlier = hotelling >= self._hotelling_limit_p2
+
+        ids = [str(idx) for idx in X_predict.index]
+
+        response_json = {
+            'id': ids,
+            'hotelling': list(hotelling),
+            'spe': list(SPE),
+            'prob_hotelling': prob_hotelling,
+            'prob_spe': prob_spe,
+            'spe_outlier': spe_outlier,
+            'hotelling_outlier': hotelling_outlier,
+            'spe_ucl': self._spe_limit,
+            'hotelling_ucl': self._hotelling_limit_p2
+        }
+
+        return response_json
+
 
     '''
     PLOTS
     '''
-    def score_plot(self, comp1:int, comp2:int, hue:pd.Series=None, plot_test=False):
+    def score_plot(self, comp1:int, comp2:int, hue:pd.Series=None, test_set:pd.DataFrame=None):
         '''
         Generates a score plot of the selected components
 
@@ -380,9 +428,6 @@ class PCA:
         if comp1 <= 0 or comp2 <= 0:
             raise ValueError("The number of components must be greather than 0")
         
-        if plot_test==True and not hasattr(self, '_scores_test'):
-            raise ValueError("No test data has been projected onto the latent space. Please use the transform or the fit_transform method before plotting the test data")
-
         scores = self._scores.reset_index()
 
         hline = alt.Chart(pd.DataFrame({'y': [0]})).mark_rule(strokeDash=[12, 6]).encode(y='y').interactive()
@@ -409,8 +454,11 @@ class PCA:
                 tooltip=[self._index_name, f"PC_{comp1}", f"PC_{comp2}"]
             ).interactive()
 
-        if plot_test:
-            scores_test = self._scores_test.reset_index()
+        if test_set is not None:
+
+            _, _, _, scores_test = self.predict(test_set)
+
+            scores_test = scores_test.reset_index()
             scatter_test = alt.Chart(scores_test).mark_point(color='black', opacity=.1).encode(
                 x=f"PC_{comp1}",
                 y=f"PC_{comp2}",
@@ -421,7 +469,7 @@ class PCA:
 
         return (scatter + vline + hline)
     
-    def biplot(self, comp1:int, comp2:int, hue:pd.Series=None, plot_test=False):
+    def biplot(self, comp1:int, comp2:int, hue:pd.Series=None, test_set:pd.DataFrame=None):
         '''
         Generates a scatter plot of the selected components with the scores and the loadings
 
@@ -442,9 +490,6 @@ class PCA:
         '''
         if comp1 <= 0 or comp2 <= 0:
             raise ValueError("The number of components must be greather than 0")
-        
-        if plot_test==True and not hasattr(self, '_scores_test'):
-            raise ValueError("No test data has been projected onto the latent space. Please use the transform or the fit_transform method before plotting the test data")
 
         scores = self._scores.copy()
         if self._scores.shape[0]>5000:
@@ -497,8 +542,11 @@ class PCA:
         hline = alt.Chart(pd.DataFrame({'y': [0]})).mark_rule(strokeDash=[12, 6]).encode(y='y')
         vline = alt.Chart(pd.DataFrame({'x': [0]})).mark_rule(strokeDash=[12, 6]).encode(x='x')
 
-        if plot_test:
-            scores_test = self._scores_test.reset_index()
+        if test_set is not None:
+
+            _, _, _, scores_test = self.predict(test_set)
+
+            scores_test = scores_test.reset_index()
             scatter_test = alt.Chart(scores_test).mark_point(color='black', opacity=.1).encode(
                 x=f"PC_{comp1}",
                 y=f"PC_{comp2}",
@@ -607,18 +655,17 @@ class PCA:
         # Altair plot for the Hotelling's T2 statistic
         return (hotelling_chart + threshold)
     
-    def hotelling_t2_plot_p2(self):
+    def hotelling_t2_plot_p2(self, test_set:pd.DataFrame):
         '''
         Generates a plot of the Hotelling's T2 statistic for Phase II
 
         '''
 
-        n_obs = self._scores_test.shape[0]  
+        hotelling, _, _, predicted_scores = self.predict(test_set)
 
-        if not hasattr(self, '_hotelling_p2'):
-            raise ValueError("No test data has been projected onto the latent space. Please use the predict() method before plotting the test data")
+        n_obs = predicted_scores.shape[0]
         
-        hotelling = pd.DataFrame({'observation': range(n_obs), 'T2': self._hotelling_p2})
+        hotelling = pd.DataFrame({'observation': range(n_obs), 'T2': hotelling})
 
         hotelling_chart = alt.Chart(hotelling).mark_line().encode(
             x=alt.X('observation', title='Observation'),
@@ -680,7 +727,7 @@ class PCA:
         # Altair plot for the SPE statistic
         return (spe_chart + threshold)
     
-    def spe_plot_p2(self):
+    def spe_plot_p2(self, test_set:pd.DataFrame):
         '''
         Generates a plot of the SPE statistic
 
@@ -693,9 +740,13 @@ class PCA:
         -------
         None
         '''
+        if not isinstance(test_set, pd.DataFrame):
+            raise ValueError("The test data must be a pandas DataFrame")
 
-        nobs = self._scores_test.shape[0]
-        spe = pd.DataFrame({'observation': range(nobs), 'SPE': self._spe_p2})
+        _, SPE, _, predicted_scores = self.predict(test_set)
+
+        nobs = predicted_scores.shape[0]
+        spe = pd.DataFrame({'observation': range(nobs), 'SPE': SPE})
 
         spe_chart = alt.Chart(spe).mark_line().encode(
             x=alt.X('observation', title='Observation'),
