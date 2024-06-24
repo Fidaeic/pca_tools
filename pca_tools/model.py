@@ -12,22 +12,36 @@ import altair as alt
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
+from .exceptions import NotDataFrameError, ModelNotFittedError, NotAListError, NotBoolError, NComponentsError
+from sklearn.base import BaseEstimator, TransformerMixin
 
-
-class PCA:
-    def __init__(self, n_comps=None, numerical_features=[], standardize=True, tolerance=1e-4, verbose=False):
+class PCA(BaseEstimator, TransformerMixin):
+    def __init__(self, n_comps:int=None, 
+                 numerical_features:list=[], 
+                 standardize:bool=True, 
+                 tolerance:float=1e-4, 
+                 verbose:bool=False,
+                 alpha:float=.99):
         
         if not 0 < tolerance < 1:
             raise ValueError('Tolerance must be strictly between 0 and 1')
+        
+        if not 0 < alpha < 1:
+            raise ValueError('Alpha must be strictly between 0 and 1')
 
         if not isinstance(numerical_features, list):
-            raise ValueError(f'Numerical features must be a list, not {type(numerical_features)}')
+            raise NotAListError(type(numerical_features).__name__)
+        
+        if not isinstance(verbose, bool) or not isinstance(standardize, bool):
+            raise NotBoolError()  
+
         
         self._standardize = standardize
         self._tolerance = tolerance
         self.verbose = verbose
         self._ncomps = n_comps
         self._numerical_features = numerical_features
+        self._alpha = alpha
 
         self._scaler = Pipeline([
             # ('imputer', SimpleImputer(strategy='mean')),
@@ -44,31 +58,43 @@ class PCA:
         for key, value in params.items():
             setattr(self, key, value)
         return self
+    
+    def get_rsquared_acc(self):
+        return self._rsquared_acc
 
-
-    def fit(self, data, alpha=0.95):
+    def fit(self, data, y=None):
 
         if not isinstance(data, pd.DataFrame):
-            raise ValueError(f'Data must be of type pandas DataFrame, not {type(data)}')
-        
-        if not 0 < alpha < 1:
-            raise ValueError('Alpha must be strictly between 0 and 1')
+            raise NotDataFrameError(type(data).__name__)
 
         if self._standardize:
             if not self._numerical_features:
                 self._numerical_features = data.columns.tolist()
             
             self._scaler.fit(data[self._numerical_features])
-        
-        self._alpha = alpha
+
         self.train(data)
 
-        self.spe()
-        self.hotelling_t2()
+        self._spe, _ = self.spe(data)
+        self._hotelling = self.hotelling_t2(data)
 
         self.control_limits(alpha=self._alpha)
 
     def preprocess(self, data):
+        """
+        Preprocesses the input data using the scaler attribute of the class.
+
+        This method applies scaling to the numerical features of the input data. If specific numerical features are 
+        defined in the class (`self._numerical_features`), only those features are scaled. Otherwise, scaling is applied 
+        to all features. The method ensures that the original index and column names of the input data are preserved 
+        in the transformed output.
+
+        Parameters:
+        - data (pd.DataFrame): The input data to preprocess. Must be a pandas DataFrame.
+
+        Returns:
+        - X_transform (pd.DataFrame): The scaled version of the input data, with the original index and columns preserved.
+        """
 
         index = data.index
         columns = data.columns
@@ -83,27 +109,45 @@ class PCA:
         return X_transform
 
             
-    def train(self, data):
+    def train(self, data:pd.DataFrame):
         '''
-        Fits the PCA model to the data
+        Trains the PCA model using the provided dataset.
+
+        This method fits the Principal Component Analysis (PCA) model to the given dataset, extracting the principal components up to the number specified during the model's initialization. It performs several key steps, including validating the input data, preprocessing it if necessary, and then iteratively extracting each principal component until the specified number of components is reached or the variance explained by the components meets a predefined threshold.
 
         Parameters
         ----------
-        data: array-like, shape (n_samples, n_features)
-            The data to be fitted
+        data : pd.DataFrame
+            The dataset to fit the PCA model to, where rows represent samples and columns represent features.
+
+        Raises
+        ------
+        NComponentsError
+            If the number of components specified is not within the valid range (1 to the number of features in `data`).
+        NotDataFrameError
+            If the input `data` is not a pandas DataFrame.
 
         Returns
         -------
         None
+            This method updates the PCA model in-place, setting various attributes related to the fitted model, including the eigenvalues, loadings, scores, and the proportion of variance explained by each principal component.
+
+        Notes
+        -----
+        - The method assumes `data` is a pandas DataFrame with numeric columns.
+        - If the number of components (`_ncomps`) is not set, it defaults to the number of features in `data`.
+        - The method preprocesses `data` by descaling and demeaning if `_standardize` is True.
+        - Principal components are extracted using an iterative process that maximizes the variance explained by each component.
+        - The method calculates and stores various metrics related to the PCA model, including the loadings, scores, eigenvalues, and the cumulative variance explained by the extracted components.
         '''
         if self._ncomps==None:
             self._ncomps = data.shape[1]
 
         if self._ncomps <= 0 or self._ncomps>data.shape[1]:
-            raise ValueError(f'The number of components must be between 0 and {data.shape[1]}')
+            raise NComponentsError(data.shape[1])
         
         if not isinstance(data, pd.DataFrame):
-            raise ValueError(f'Data must be of type pandas DataFrame, not {type(data)}')
+            raise NotDataFrameError(type(data).__name__)
         
         self._variables = data.columns
         self._index = data.index       
@@ -161,26 +205,37 @@ class PCA:
         self._mean_train = X.mean()
         self._std_train = X.std()
 
-    def transform(self, data, y=None):
+    def transform(self, data:pd.DataFrame, y=None):
         '''
-        Projects a set of data onto the PCA space
+        Transforms the input data by projecting it onto the PCA space defined by the model.
+
+        This method takes a dataset and projects it onto the PCA space, effectively reducing its dimensionality based on the principal components previously extracted during the model's fitting process. It is designed to work seamlessly within a scikit-learn pipeline, hence the optional `y` parameter, which is not used but ensures compatibility with pipeline requirements.
 
         Parameters
         ----------
-        data: array-like, shape (n_samples, n_features)
-            The data to be projected onto the PCA space
-
-        y: None
-            This is only added so we can use this method within a scikit-learn pipeline
+        data : pd.DataFrame
+            The dataset to be transformed, where each row is a sample and each column is a feature. The dataset must be a pandas DataFrame.
+        y : None, optional
+            Placeholder to maintain compatibility with scikit-learn's pipeline transformations. It is not used in the transformation process.
 
         Returns
         -------
-        array-like, shape (n_samples, n_components)
-            The projected data
+        pd.DataFrame
+            A pandas DataFrame containing the transformed data. The DataFrame has the same number of rows as the input data and a number of columns equal to the number of principal components retained by the model. The columns are named according to the principal components they represent.
+
+        Raises
+        ------
+        NotDataFrameError
+            If the input `data` is not a pandas DataFrame.
+
+        Notes
+        -----
+        - The transformation process involves centering and scaling the data (if standardization was applied during fitting) before projecting it onto the PCA space using the loadings matrix derived during fitting.
+        - The returned DataFrame retains the original index of the input `data`, facilitating easy tracking of samples.
         '''
 
         if not isinstance(data, pd.DataFrame):
-            raise ValueError(f'Data must be of type pandas DataFrame, not {type(data)}')
+            raise NotDataFrameError(type(data).__name__)
 
         X_transform = data.copy()
         # Descale and demean matrix
@@ -191,37 +246,53 @@ class PCA:
 
     def fit_transform(self, data, y=None):
         '''
-        Fits the PCA model and projects the data onto the PCA space
+        Fits the PCA model to the data and then transforms the data by projecting it onto the PCA space.
+
+        This method first fits the PCA model to the provided dataset, identifying the principal components that capture the most variance within the data. After fitting, it transforms the dataset by projecting it onto the space spanned by the identified principal components. This process reduces the dimensionality of the data while attempting to preserve as much of the data's variance as possible.
 
         Parameters
         ----------
-        data: array-like, shape (n_samples, n_features)
-            The data to be projected onto the PCA space
+        data : pd.DataFrame
+            The dataset to be transformed, where each row is a sample and each column is a feature. The dataset must be a pandas DataFrame.
+        y : None, optional
+            Included for compatibility with scikit-learn pipeline conventions. It is not used in this method.
 
-        y: None
-            This is only added so we can use this method within a scikit-learn pipeline
         Returns
         -------
-        array-like, shape (n_samples, n_components)
-            The projected data
+        pd.DataFrame, shape (n_samples, n_components)
+            The data transformed into the PCA space, with dimensionality reduced to the number of principal components retained by the model.
+
+        Notes
+        -----
+        - The method combines fitting and transformation into a single step, which is particularly useful for pipeline integrations where model fitting and data transformation are performed sequentially.
+        - The number of principal components (`n_components`) retained can be specified during the model initialization. If not specified, it defaults to the lesser of the number of samples or features in `data`.
         '''
         self.train(data)
         return self.transform(data)
 
     def inverse_transform(self, data):
         '''
-        Projects the data back to the original space
+        Reconstructs the original dataset from its PCA-transformed version.
+
+        This method takes a dataset that has been transformed into the PCA space and projects it back to its original feature space. This is achieved by multiplying the PCA-transformed data by the transpose of the loadings matrix, effectively reversing the PCA transformation process.
 
         Parameters
         ----------
-        data: array-like, shape (n_samples, n_components)
-            The data to be projected back to the original space
+        data : pd.DataFrame, shape (n_samples, n_components)
+            The PCA-transformed data to be projected back to the original space. Can be a NumPy array or a pandas DataFrame.
 
         Returns
         -------
-        array-like, shape (n_samples, n_features)
-            The projected data
+        pd.DataFrame, shape (n_samples, n_features)
+            The data reconstructed in the original feature space, with the same number of features as the original dataset before PCA transformation.
+
+        Notes
+        -----
+        - This operation is the inverse of the PCA transformation, but it may not perfectly reconstruct the original data if the PCA transformation was lossy (i.e., if some components were discarded).
         '''
+
+        if not hasattr(self, '_scores'):
+            raise ModelNotFittedError()
 
         if isinstance(data, pd.DataFrame):
             data = data.values
@@ -229,6 +300,33 @@ class PCA:
         return data @ self._loadings
     
     def control_limits(self, alpha:float=0.95):
+        '''
+        Calculates the control limits for Hotelling's T2 and SPE (Squared Prediction Error) statistics.
+
+        This method computes the control limits for both the Hotelling's T2 statistic and the SPE statistic for a PCA model. The control limits are calculated for two phases: Phase I (initial control limit based on the model fitting dataset) and Phase II (control limit for monitoring new observations). These limits are used to detect outliers or shifts in the process mean or variability in multivariate data.
+
+        Parameters
+        ----------
+        alpha : float, optional
+            The significance level used to calculate the control limits. It represents the probability of observing a point within the control limits under the assumption that the process is in control. The default value is 0.95, corresponding to a 95% confidence level.
+
+        Attributes Set
+        --------------
+        _hotelling_limit_p1 : float
+            The control limit for Hotelling's T2 statistic in Phase I.
+        _hotelling_limit_p2 : float
+            The control limit for Hotelling's T2 statistic in Phase II.
+        _spe_limit : float
+            The control limit for the SPE statistic.
+
+        Notes
+        -----
+        - The Hotelling's T2 statistic is a multivariate analogue of the univariate t-square statistic. It is used to test the hypothesis that the mean vector of a multivariate population is equal to a given vector.
+        - The SPE statistic measures the squared prediction error of each observation from the PCA model. It is used to detect observations that do not conform to the model.
+        - The control limits are based on the F-distribution for Hotelling's T2 and the chi-squared distribution for SPE, adjusted for the sample size and the number of principal components in the model.
+        '''
+        if not hasattr(self, '_scores'):
+            raise ModelNotFittedError()
         # Hotelling's T2 control limit. Phase I
         dfn = self._ncomps/2
         dfd = (self._nobs-self._ncomps-1)/2
@@ -251,7 +349,7 @@ class PCA:
 
         self._spe_limit = chi2.ppf(alpha, df)*const
     
-    def hotelling_t2(self):
+    def hotelling_t2(self, data):
         '''
         Hotelling's T2 represents the estimated squared Mahalanobis distance from the center of the latent subspace
         to the projection of an observation onto this subspace (Ferrer, 2014).
@@ -264,20 +362,21 @@ class PCA:
         This statistic help us to detect outliers given that it is a measure of the distance between the centroid
         of the subspace and an observation. Observations that are above the control limit might be considered extreme outliers
 
-        Parameters
-        ----------
-        alpha : float
-            Type I error. 1-alpha is the probability of rejecting a true null hypothesis.
-
         Returns
         -------
         Hotelling's T2 statistic for every observation.
         '''
-
-        self._hotelling = np.array([np.sum((self._scores.values[i, :]**2)/self._eigenvals) 
-                                    for i in range(self._nobs)])
+        if not hasattr(self, '_scores'):
+            raise ModelNotFittedError()
         
-    def spe(self):
+        if not isinstance(data, pd.DataFrame):
+            raise NotDataFrameError(type(data).__name__)
+
+        predicted_scores = self.transform(data)
+
+        return np.sum((predicted_scores**2) / self._eigenvals, axis=1)
+        
+    def spe(self, data):
         '''
         Represents the sum of squared prediction errors. The value is given by the expression 
         e^T_i * e_i, so the SPE statistic is the scalar product of the residuals vector of observation i
@@ -288,78 +387,65 @@ class PCA:
         
         Observations that are above the control limit can be considered as moderate outliers.
 
-        Parameters
-        ----------
-        alpha : float
-            Type I error. 1-alpha is the probability of rejecting a true null hypothesis.
-        plot : bool, optional
-            If True, a plot of the Hotelling's T2 statistic and the control limit will be displayed. The default is True.
-
         Returns
         -------
         SPE statistic for every observation.
 
         '''
-        
-        self._spe = np.array([self._residuals_fit[i, :].T@self._residuals_fit[i, :] for i in range(self._nobs)])
-
-    def spe_p2(self, alpha:float=0.95):
-        '''
-        Represents the sum of squared prediction errors. The value is given by the expression 
-        e^T_i * e_i, so the SPE statistic is the scalar product of the residuals vector of observation i
-        '''
-
-        SPE = np.array([self._residuals_fit[i, :].T@self._residuals_fit[i, :] for i in range(self._nobs)])
-
-        b, nu = np.mean(SPE), np.var(SPE)
-        
-        df = (2*b**2)/nu
-        const = nu/(2*b)
-
-        self._spe = SPE
-        self._spe_limit_p1 = chi2.ppf(alpha, df)*const
-
-    def hotelling_t2_phase2(self, data):
-
-        if not isinstance(data, pd.DataFrame):
-            raise ValueError(f'Data must be of type pandas DataFrame, not {type(data)}')
-
-        X = data.copy()
-
-        # Descale and demean matrix
-        if self._standardize:
-            X = self.preprocess(data=X)
-
-        X = X.values
-
-        T2 = np.array([np.sum((X[i, :] @ self._loadings.values)**2/self._eigenvals) for i in range(X.shape[0])])
-
-        return T2
-
-    def project(self, X_predict):
-
-        if not isinstance(X_predict, pd.DataFrame):
-            raise ValueError(f'Data must be of type pandas DataFrame, not {type(X_predict)}')
 
         if not hasattr(self, '_scores'):
-            raise ValueError("The model has not been fitted yet. Please use the fit method before predicting")
+            raise ModelNotFittedError()
         
-        predicted_scores = self.transform(X_predict)
+        X_transform = data.copy()
 
-        X_transform = X_predict.copy()
-        
         # Descale and demean matrix
         if self._standardize:
             X_transform = self.preprocess(data=X_transform)
 
-        # Hotelling's T2 statistic
-        hotelling_p2 = [float(np.sum((predicted_scores.values[i, :]**2)/self._eigenvals)) 
-                                    for i in range(predicted_scores.shape[0])]
-        
-        # SPE statistic
-        residuals = X_transform.values - predicted_scores.values @ self._loadings.values
+        X_transform = X_transform.values
 
-        spe_p2 = [float(residuals[i, :].T@residuals[i, :]) for i in range(predicted_scores.shape[0])]
+        predicted_scores = self.transform(data)
+
+        # SPE statistic
+        residuals = X_transform - predicted_scores.values @ self._loadings.values
+
+        SPE = [float(residuals[i, :].T@residuals[i, :]) for i in range(predicted_scores.shape[0])]
+
+        return SPE, residuals
+
+    def project(self, X_predict):
+        """
+        Projects new data onto the fitted PCA model and calculates Hotelling's T2 and SPE statistics.
+
+        This method is used to project new observations onto the principal components obtained from the fitted PCA model. 
+        It also calculates the Hotelling's T2 statistic and the Squared Prediction Error (SPE) for each observation, 
+        which can be used for anomaly detection or assessing the fit of the model.
+
+        Parameters:
+        - X_predict (pd.DataFrame): The new data to be projected. Must be a pandas DataFrame.
+
+        Raises:
+        - ValueError: If `X_predict` is not a pandas DataFrame.
+        - ValueError: If the model has not been fitted yet.
+
+        Returns:
+        - hotelling_p2 (list of float): The Hotelling's T2 statistic for each observation in `X_predict`.
+        - spe_p2 (list of float): The SPE statistic for each observation in `X_predict`.
+        - residuals (np.ndarray): The residuals of the projection, indicating the difference between the original 
+        data and its reconstruction from the principal components.
+        - predicted_scores (pd.DataFrame): The scores of the projected data on the principal components.
+        """
+        if not isinstance(X_predict, pd.DataFrame):
+            raise NotDataFrameError(type(X_predict).__name__)
+
+        if not hasattr(self, '_scores'):
+            raise ModelNotFittedError()
+        
+        hotelling_p2 = self.hotelling_t2(X_predict)
+        
+        predicted_scores = self.transform(X_predict)
+
+        spe_p2, residuals = self.spe(X_predict)
 
         return hotelling_p2, spe_p2, residuals, predicted_scores
     
@@ -374,9 +460,15 @@ class PCA:
 
         Returns
         -------
-        array-like, shape (n_samples, 1)
-            The probability of an observation being an outlier
+        response : dict
+            Dictionary containing the prediction of the model given an observation. It contains attributes such as the T2 and SPE limits and values, as well as the probability of the observation being an outlier
         '''
+        if not isinstance(X_predict, pd.DataFrame):
+            raise NotDataFrameError(type(X_predict).__name__)
+
+        if not hasattr(self, '_scores'):
+            raise ModelNotFittedError()
+        
         hotelling, SPE, _, _ = self.project(X_predict)
 
         # Hotelling's T2 control limit. Phase II
@@ -385,7 +477,6 @@ class PCA:
         const = (self._ncomps * (self._nobs**2 -1)) / (self._nobs * (self._nobs - self._ncomps))
         prob_hotelling = [float(1-f.cdf(np.array(value)/const, dfn, dfd)) for value in hotelling]
         
-
         # SPE control limit. Phase II
         b, nu = np.mean(self._spe), np.var(self._spe)
             
@@ -399,32 +490,17 @@ class PCA:
 
         ids = [str(idx) for idx in X_predict.index]
 
-        if len(X_predict)==1:
-            response_json = {
-                        'id': ids,
-                        'hotelling': list(hotelling),
-                        'spe': list(SPE),
-                        'prob_hotelling': list(prob_hotelling),
-                        'prob_spe': list(prob_spe),
-                        'spe_outlier': spe_outlier,
-                        'hotelling_outlier': hotelling_outlier,
-                        'spe_ucl': float(self._spe_limit),
-                        'hotelling_ucl': float(self._hotelling_limit_p2)
-                    }
-
-        else:
-            response_json = {
-                'id': ids,
-                'hotelling': list(hotelling),
-                'spe': list(SPE),
-                'prob_hotelling': list(prob_hotelling),
-                'prob_spe': list(prob_spe),
-                'spe_outlier': spe_outlier,
-                'hotelling_outlier': hotelling_outlier,
-                'spe_ucl': float(self._spe_limit),
-                'hotelling_ucl': float(self._hotelling_limit_p2)
-            }
-
+        response_json = {
+                    'id': ids,
+                    'hotelling': list(hotelling),
+                    'spe': list(SPE),
+                    'prob_hotelling': list(prob_hotelling),
+                    'prob_spe': list(prob_spe),
+                    'spe_outlier': spe_outlier,
+                    'hotelling_outlier': hotelling_outlier,
+                    'spe_ucl': float(self._spe_limit),
+                    'hotelling_ucl': float(self._hotelling_limit_p2)
+        }
         return response_json
 
 
@@ -445,9 +521,12 @@ class PCA:
         Returns
         -------
         None
-        '''
-        if comp1 <= 0 or comp2 <= 0:
-            raise ValueError("The number of components must be greather than 0")
+        '''       
+        if comp1 <= 0 or comp1>self._nvars or comp2 <= 0 or comp2>self._nvars:
+            raise NComponentsError(self._nvars)
+        
+        if not hasattr(self, '_scores'):
+            raise ModelNotFittedError()
         
         scores = self._scores.reset_index()
 
@@ -457,7 +536,7 @@ class PCA:
         if hue is not None:
             # Check if hue is a python series or a numpy array
             if not isinstance(hue, pd.Series):
-                raise ValueError("Hue must be a pandas Series")
+                raise TypeError("Hue must be a pandas Series")
             
             scores[hue.name] = hue
         
@@ -477,7 +556,7 @@ class PCA:
 
         if test_set is not None:
 
-            _, _, _, scores_test = self.project(test_set)
+            scores_test = self.transform(test_set)
 
             scores_test = scores_test.reset_index()
             scatter_test = alt.Chart(scores_test).mark_point(color='black', opacity=.1).encode(
@@ -502,15 +581,18 @@ class PCA:
             The number of the second component.
         hue : pd.Series
             A pandas Series with the hue of the plot. It must have the same length as the number of observations
-        plot_test : bool
-            If True, the test data will be plotted as well
+        test_set : pd.DataFrame
+            A pandas DataFrame that contains the held-out observations that will be projected onto the latent space
 
         Returns
         -------
         None
         '''
-        if comp1 <= 0 or comp2 <= 0:
-            raise ValueError("The number of components must be greather than 0")
+        if comp1 <= 0 or comp1>self._ncomps or comp2 <= 0 or comp2>self._ncomps:
+            raise NComponentsError(self._nvars)
+        
+        if not hasattr(self, '_scores'):
+            raise ModelNotFittedError()
 
         scores = self._scores.copy()
         if self._scores.shape[0]>5000:
@@ -565,7 +647,7 @@ class PCA:
 
         if test_set is not None:
 
-            _, _, _, scores_test = self.project(test_set)
+            scores_test = self.transform(test_set)
 
             scores_test = scores_test.reset_index()
             scatter_test = alt.Chart(scores_test).mark_point(color='black', opacity=.1).encode(
@@ -593,8 +675,11 @@ class PCA:
         -------
         None
         '''
-        if comp <= 0:
-            raise ValueError("The number of components must be greather than 0")
+        if comp <= 0 or comp>self._ncomps:
+            raise NComponentsError(self._nvars)
+        
+        if not hasattr(self, '_scores'):
+            raise ModelNotFittedError()
 
         loadings = self._loadings.T.copy()
         loadings.index.name = 'variable'
@@ -610,19 +695,32 @@ class PCA:
     def difference_plot(self, 
                         X_obs:pd.Series,):   
         '''
-        Generates a bar plot of the difference between a specific observation and the mean of the sample
+        Generates a bar plot visualizing the difference between a specific observation and the mean of the sample.
+
+        This method creates a bar plot to visually compare the values of a given observation against the mean values of the training sample. It is particularly useful for understanding how an individual observation deviates from the average trend across each variable. The method checks if the input observation is a pandas DataFrame and if it contains the same variables as those used in the training data. Optionally, if the model is set to standardize data, the observation will be preprocessed accordingly before plotting.
 
         Parameters
         ----------
-        obs : int
-            The number of the observation.
+        X_obs : pd.DataFrame
+            The observation to compare against the sample mean. Must be a single observation (1 row) in a pandas DataFrame format.
 
         Returns
         -------
-        None
+        alt.Chart
+            An Altair Chart object that represents the bar plot. This object can be directly displayed in Jupyter notebooks or saved as an image.
+
+        Raises
+        ------
+        NotDataFrameError
+            If `X_obs` is not a pandas DataFrame.
+        ValueError
+            If `X_obs` does not contain the same variables as the training data.
         '''
         if not isinstance(X_obs, pd.DataFrame):
-            raise ValueError("The observation must be a pandas Series or a DataFrame")
+            raise NotDataFrameError(type(X_obs).__name__)
+        
+        if not hasattr(self, '_scores'):
+            raise ModelNotFittedError()
         
         if sorted(X_obs.columns) != sorted(self._variables):
             raise ValueError("The observation must have the same variables as the training data")
@@ -641,17 +739,25 @@ class PCA:
 
     def hotelling_t2_plot_p1(self):
         '''
-        Generates a plot of the Hotelling's T2 statistic
+        Generates an interactive plot visualizing the Hotelling's T2 statistic over observations.
 
-        Parameters
-        ----------
-        alpha : float
-            Type I error. 1-alpha is the probability of rejecting a true null hypothesis.
+        This method creates an interactive line plot of the Hotelling's T2 statistic for each observation in the dataset. The plot includes a horizontal dashed line indicating the threshold value beyond which an observation is considered an outlier. This visualization aids in identifying observations that significantly deviate from the model's assumptions or the majority of the data.
+
+        The plot is generated using Altair, a declarative statistical visualization library for Python. The method configures the plot with a title that includes the significance level (alpha) and the threshold value for the Hotelling's T2 statistic. Observations and their corresponding T2 values are displayed as tooltips when hovering over the plot.
 
         Returns
         -------
-        None
+        alt.LayerChart
+            An Altair LayerChart object that combines the line plot of Hotelling's T2 statistics with the threshold rule. This object can be displayed in Jupyter notebooks or saved as an image.
+
+        Notes
+        -----
+        - The method assumes that the Hotelling's T2 statistics (`self._hotelling`) and the threshold (`self._hotelling_limit_p1`) have been previously calculated and are stored as attributes of the class.
+        - The plot is interactive, allowing for zooming and panning to explore the data points in detail.
         '''
+        if not hasattr(self, '_scores'):
+            raise ModelNotFittedError()
+        
         hotelling = pd.DataFrame({'observation': range(self._nobs), 'T2': self._hotelling})
 
         hotelling_chart = alt.Chart(hotelling).mark_line().encode(
@@ -678,11 +784,39 @@ class PCA:
     
     def hotelling_t2_plot_p2(self, test_set:pd.DataFrame):
         '''
-        Generates a plot of the Hotelling's T2 statistic for Phase II
+        Generates an interactive plot of the Hotelling's T2 statistic for Phase II observations.
 
+        This method visualizes the Hotelling's T2 statistic for a given test set, aiding in the identification of outliers. It checks if the test set is a pandas DataFrame and raises an error if not. The method projects the test set onto the PCA model, calculates the Hotelling's T2 statistic for each observation, and generates an interactive line plot with a threshold line indicating the outlier cutoff.
+
+        The plot is created using Altair, enabling interactive exploration through zooming and panning. Observations are plotted along the x-axis, with their corresponding Hotelling's T2 values on the y-axis. A red dashed line represents the threshold value, above which observations are considered outliers. Tooltips display the observation index and T2 value upon hovering.
+
+        Parameters
+        ----------
+        test_set : pd.DataFrame
+            The test set to be analyzed. Must be a pandas DataFrame.
+
+        Returns
+        -------
+        alt.LayerChart
+            An Altair LayerChart object combining the Hotelling's T2 statistic line plot with the threshold rule. This object can be displayed in Jupyter notebooks or saved as an image.
+
+        Raises
+        ------
+        NotDataFrameError
+            If `test_set` is not a pandas DataFrame.
+
+        Notes
+        -----
+        - The method assumes the PCA model has been fitted and the threshold (`self._hotelling_limit_p2`) has been set.
+        - The plot's title includes the significance level (alpha) and the threshold value, providing context for the analysis.
         '''
+        if not hasattr(self, '_scores'):
+            raise ModelNotFittedError()
 
-        hotelling, _, _, _ = self.project(test_set)
+        if not isinstance(test_set, pd.DataFrame):
+            raise NotDataFrameError(type(test_set).__name__)
+
+        hotelling = self.hotelling_t2(test_set)
 
         n_obs = len(hotelling)
 
@@ -713,17 +847,30 @@ class PCA:
     
     def spe_plot_p1(self):
         '''
-        Generates a plot of the SPE statistic
+        Generates an interactive plot visualizing the Squared Prediction Error (SPE) statistic for Phase I observations.
+
+        This method plots the SPE statistic for each observation in the dataset, providing a visual tool for outlier detection. The plot includes a horizontal dashed line indicating the SPE threshold, which helps identify observations with unusually high prediction errors, suggesting they may be outliers.
+
+        The plot is generated using Altair, a declarative visualization library, ensuring interactivity with features like zooming and panning. Observations are plotted along the x-axis, with their SPE values on the y-axis. A red dashed line represents the SPE threshold, above which observations are considered potential outliers. Tooltips display the observation index and SPE value for further inspection.
 
         Parameters
         ----------
-        alpha : float
-            Type I error. 1-alpha is the probability of rejecting a true null hypothesis.
+        None
 
         Returns
         -------
-        None
+        alt.LayerChart
+            An Altair LayerChart object that combines the SPE statistic line plot with the threshold rule. This object can be displayed in Jupyter notebooks or saved as an image.
+
+        Notes
+        -----
+        - The method assumes that the SPE statistics (`self._spe`) and the threshold (`self._spe_limit`) have been previously calculated and are stored as attributes of the class.
+        - The plot's title includes the significance level (alpha) and the threshold value, providing context for the analysis.
         '''
+
+        if not hasattr(self, '_scores'):
+            raise ModelNotFittedError()
+        
         spe = pd.DataFrame({'observation': range(self._nobs), 'SPE': self._spe})
 
         spe_chart = alt.Chart(spe).mark_line().encode(
@@ -750,23 +897,41 @@ class PCA:
     
     def spe_plot_p2(self, test_set:pd.DataFrame):
         '''
-        Generates a plot of the SPE statistic
+        Generates an interactive plot visualizing the Squared Prediction Error (SPE) statistic for Phase II observations.
+
+        This method creates an interactive plot of the SPE statistic for each observation in the provided test set. It serves as a diagnostic tool to identify observations with unusually high prediction errors, which may indicate outliers or anomalies. The plot includes a horizontal dashed line indicating the SPE threshold, aiding in the visual identification of potential outliers.
+
+        The plot is generated using Altair, a declarative visualization library, ensuring interactivity with features like zooming and panning. Observations are plotted along the x-axis, with their SPE values on the y-axis. A red dashed line represents the SPE threshold, above which observations are considered potential outliers. Tooltips provide detailed information about the observation index and SPE value for further inspection.
 
         Parameters
         ----------
-        alpha : float
-            Type I error. 1-alpha is the probability of rejecting a true null hypothesis.
+        test_set : pd.DataFrame
+            The test set to be analyzed. Must be a pandas DataFrame.
 
         Returns
         -------
-        None
+        alt.LayerChart
+            An Altair LayerChart object that combines the SPE statistic line plot with the threshold rule. This object can be displayed in Jupyter notebooks or saved as an image.
+
+        Raises
+        ------
+        NotDataFrameError
+            If `test_set` is not a pandas DataFrame.
+
+        Notes
+        -----
+        - The method assumes that the SPE statistics and the threshold (`self._spe_limit`) have been previously calculated and are stored as attributes of the class.
+        - The plot's title includes the significance level (alpha) and the threshold value, providing context for the analysis.
         '''
+        if not hasattr(self, '_scores'):
+            raise ModelNotFittedError()
+        
         if not isinstance(test_set, pd.DataFrame):
-            raise ValueError("The test data must be a pandas DataFrame")
+            raise NotDataFrameError(type(test_set).__name__)
 
-        _, SPE, _, predicted_scores = self.project(test_set)
+        SPE, _ = self.spe(test_set)
 
-        nobs = predicted_scores.shape[0]
+        nobs = len(SPE)
         spe = pd.DataFrame({'observation': range(nobs), 'SPE': SPE})
 
         spe_chart = alt.Chart(spe).mark_line().encode(
@@ -793,20 +958,41 @@ class PCA:
 
     def residual_barplot(self, data:pd.DataFrame):
         '''
-        Generates a bar plot of the residuals of the selected observation
+        Generates an interactive bar plot visualizing the residuals for a specific observation within the dataset.
+
+        This method creates a bar plot to display the residuals (differences between observed and predicted values) for a single observation in the dataset. It is designed to help in diagnosing and understanding the prediction errors for individual observations. The method first checks if the input data is a pandas DataFrame and if it contains the correct number of features as expected by the model. It also verifies that exactly one observation is provided for analysis.
+
+        Upon validation, the method calculates the residuals and the Squared Prediction Error (SPE) for the given observation. It then generates an interactive bar plot using Altair, where each bar represents a variable's residual. The plot includes tooltips for detailed residual values and is titled with the observation's index and its SPE value, providing immediate insight into the model's performance on that observation.
 
         Parameters
         ----------
-        obs : int
-            The number of the observation.
+        data : pd.DataFrame
+            The observation to analyze, provided as a single-row pandas DataFrame.
 
         Returns
         -------
-        None
+        alt.Chart
+            An interactive Altair Chart object representing the residuals bar plot. This plot includes tooltips and is titled with the observation's index and SPE value.
+
+        Raises
+        ------
+        NotDataFrameError
+            If the input `data` is not a pandas DataFrame.
+        ValueError
+            If the number of features in `data` does not match the model's expected number of features.
+        ValueError
+            If `data` contains more than one observation.
+
+        Notes
+        -----
+        - The method assumes that the model and its variables (`self._variables`) have been previously defined.
+        - The SPE (Squared Prediction Error) is calculated as part of the residuals analysis and is displayed in the plot title for reference.
         '''
+        if not hasattr(self, '_scores'):
+            raise ModelNotFittedError()
        
         if not isinstance(data, pd.DataFrame):
-            raise ValueError("The data must be a pandas DataFrame")
+            raise NotDataFrameError(type(data).__name__)
     
         if data.shape[1] != len(self._variables):
             raise ValueError(f'Number of features in data must be {len(self._variables)}')
@@ -814,7 +1000,7 @@ class PCA:
         if data.shape[0] != 1:
             raise ValueError(f'Number of observations in data must be 1')
         
-        _, SPE, residuals, _ = self.project(data)
+        SPE, residuals = self.spe(data)
         
 
         residuals = pd.DataFrame({'variable': self._variables, 'residual': residuals[0]})

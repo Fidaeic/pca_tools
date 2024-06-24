@@ -1,19 +1,11 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Sat Jul 31 09:40:07 2021
-
-@author: fidae
-"""
-
 import numpy as np
-from numpy import linalg as LA
 from scipy.stats import f, beta, chi2
 import copy
 from .model import PCA
 import pandas as pd
 import logging
 import altair as alt
+from .exceptions import NotDataFrameError, NComponentsError, NotAListError, ModelNotFittedError
 
 def optimize(X, n_comps, alpha, numerical_features, statistic='T2', threshold=3, drop_percentage=0.2):
     """
@@ -44,7 +36,6 @@ def optimize(X, n_comps, alpha, numerical_features, statistic='T2', threshold=3,
     ValueError
         If `statistic` is not 'T2' or 'SPE', `alpha` is not between 0 and 1, `threshold` is not positive, `n_comps` is not greater than 0, `numerical_features` is not a list, or `X` is not a pandas DataFrame.
     """
-
     # Set up logging
     logging.basicConfig(level=logging.INFO)
 
@@ -58,21 +49,21 @@ def optimize(X, n_comps, alpha, numerical_features, statistic='T2', threshold=3,
     if threshold<0:
         raise ValueError("Threshold must be positive")
     
-    if n_comps<1:
-        raise ValueError("Number of components must be greater than 0")
+    if not isinstance(X, pd.DataFrame):
+            raise NotDataFrameError(type(X).__name__)
+    
+    if n_comps <= 0 or n_comps>X.shape[1]:
+            raise NComponentsError(X.shape[1])
     
     if not isinstance(numerical_features, list):
-        raise ValueError("Numerical features must be a list")
-    
-    if not isinstance(X, pd.DataFrame):
-        raise ValueError("X must be a pandas DataFrame")
+        raise NotAListError()
 
     # Initialize variables
     keep_indices = np.arange(X.shape[0])
 
     # Train PCA model
-    pca = PCA(n_comps=n_comps, numerical_features=numerical_features)
-    pca.fit(X, alpha=alpha)
+    pca = PCA(n_comps=n_comps, numerical_features=numerical_features, alpha=alpha)
+    pca.fit(X)
 
     # Determine control limit and statistic value based on statistic
     if statistic == 'T2':
@@ -107,7 +98,7 @@ def optimize(X, n_comps, alpha, numerical_features, statistic='T2', threshold=3,
         keep_indices = np.delete(keep_indices, drop_indices)
 
         # Retrain PCA model
-        pca.fit(X.iloc[keep_indices], alpha=alpha)
+        pca.fit(X.iloc[keep_indices],)
 
         # Recalculate control limit and statistic value
         if statistic == 'T2':
@@ -129,26 +120,48 @@ def optimize(X, n_comps, alpha, numerical_features, statistic='T2', threshold=3,
     # Return optimized data
     return X.iloc[keep_indices]
 
-def spe_contribution_plot(pca_model, observation):
+def spe_contribution_plot(pca_model, observation:pd.DataFrame):
 
     '''
-    Generates a bar plot of the contribution of each variable to the SPE statistic of the selected observation
+    Generates an interactive bar plot visualizing each variable's contribution to the Squared Prediction Error (SPE) for a specific observation.
+
+    This function creates a bar plot that breaks down the contribution of each variable to the overall SPE of a given observation. It is useful for identifying which variables contribute most to the observation's deviation from the model's predictions. The function checks if the PCA model has been fitted and if the input observation is a valid single-row pandas DataFrame with the correct number of features.
 
     Parameters
     ----------
-    obs : int
-        The number of the observation.
+    pca_model : object
+        The PCA model object that has been fitted to the data.
+    observation : pd.DataFrame
+        A single-row pandas DataFrame representing the observation to analyze.
+
+    Raises
+    ------
+    ModelNotFittedError
+        If the PCA model has not been fitted with data.
+    NotDataFrameError
+        If the input observation is not a pandas DataFrame.
+    ValueError
+        If the number of features in the observation does not match the model's expected number of features.
+    ValueError
+        If more than one observation is provided.
 
     Returns
     -------
-    None
-    '''
-    # if obs < 0 or obs >= self._nobs:
-    #     raise ValueError("The observation number must be between 0 and the number of observations")
+    alt.Chart
+        An Altair Chart object representing the interactive bar plot of variable contributions to the SPE.
 
-    # Calculate the residuals based on the model
+    Notes
+    -----
+    - The function deep copies the PCA model to avoid altering its state.
+    - The SPE and residuals are calculated using the model's `project` method.
+    - The plot includes tooltips for each variable's contribution and displays the total SPE value in the title.
+    '''
+
+    if not hasattr(pca_model, '_scores'):
+        raise ModelNotFittedError()
+
     if not isinstance(observation, pd.DataFrame):
-            raise ValueError(f'Data must be of type pandas DataFrame, not {type(observation)}')
+        raise NotDataFrameError(type(observation).__name__)
     
     if observation.shape[1] != len(pca_model._variables):
         raise ValueError(f'Number of features in data must be {len(pca_model._variables)}')
@@ -158,7 +171,7 @@ def spe_contribution_plot(pca_model, observation):
     
     pca_copy = copy.deepcopy(pca_model)
 
-    _, SPE, residuals, _ = pca_copy.project(observation)
+    SPE, residuals = pca_copy.spe(observation)
 
     residuals = pd.DataFrame({'variable': pca_copy._variables, 'contribution': residuals[0]**2})
 
@@ -171,21 +184,46 @@ def spe_contribution_plot(pca_model, observation):
         title=f'Contribution to the SPE for the observation: {str(observation.index.values[0])} - SPE: {SPE[0]:.2f}'
     ).interactive()
 
-def hotelling_t2_contribution_plot(pca_model, observation):
+def hotelling_t2_contribution_plot(pca_model, observation:pd.DataFrame):
     '''
-    Generates a bar plot of the contribution of each variable to the Hotelling's T2 statistic of the selected observation
+    Generates an interactive bar plot visualizing each variable's contribution to the Hotelling's T2 statistic for a specific observation.
+
+    This function creates a bar plot to illustrate how much each variable contributes to the Hotelling's T2 statistic of a given observation, aiding in the identification of variables that significantly influence the observation's deviation from the model's expectations. It validates the input observation to ensure it is a single-row pandas DataFrame with the correct number of features and checks if the PCA model has been fitted.
 
     Parameters
     ----------
-    obs : int
-        The number of the observation.
+    pca_model : object
+        The PCA model object that has been fitted to the data.
+    observation : pd.DataFrame
+        A single-row pandas DataFrame representing the observation to analyze.
+
+    Raises
+    ------
+    ModelNotFittedError
+        If the PCA model has not been fitted with data.
+    NotDataFrameError
+        If the input observation is not a pandas DataFrame.
+    ValueError
+        If the number of features in the observation does not match the model's expected number of features.
+    ValueError
+        If more than one observation is provided.
 
     Returns
     -------
-    None
+    alt.Chart
+        An Altair Chart object representing the interactive bar plot of variable contributions to the Hotelling's T2 statistic.
+
+    Notes
+    -----
+    - The function deep copies the PCA model to avoid altering its state.
+    - Contributions are calculated based on the loadings and the observation's standardized values, normalized by the eigenvalues.
+    - The plot includes tooltips for each variable's contribution and displays the total Hotelling's T2 value and the component with the maximum contribution in the title.
     '''
+    if not hasattr(pca_model, '_scores'):
+        raise ModelNotFittedError()
+
     if not isinstance(observation, pd.DataFrame):
-            raise ValueError(f'Data must be of type pandas DataFrame, not {type(observation)}')
+        raise NotDataFrameError(type(observation).__name__)
     
     if observation.shape[1] != len(pca_model._variables):
         raise ValueError(f'Number of features in data must be {len(pca_model._variables)}')
@@ -195,7 +233,7 @@ def hotelling_t2_contribution_plot(pca_model, observation):
     
     pca_copy = copy.deepcopy(pca_model)
 
-    hotelling, _, _, _ = pca_copy.project(observation)
+    hotelling = pca_copy.hotelling_t2(observation)
 
     X_transform = observation.copy()
 
