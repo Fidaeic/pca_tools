@@ -353,13 +353,13 @@ class PCA:
             X_transform = self.preprocess(data=X_transform)
 
         # Hotelling's T2 statistic
-        hotelling_p2 = np.array([np.sum((predicted_scores.values[i, :]**2)/self._eigenvals) 
-                                    for i in range(predicted_scores.shape[0])])
+        hotelling_p2 = [float(np.sum((predicted_scores.values[i, :]**2)/self._eigenvals)) 
+                                    for i in range(predicted_scores.shape[0])]
         
         # SPE statistic
         residuals = X_transform.values - predicted_scores.values @ self._loadings.values
 
-        spe_p2 = np.array([residuals[i, :].T@residuals[i, :] for i in range(predicted_scores.shape[0])])
+        spe_p2 = [float(residuals[i, :].T@residuals[i, :]) for i in range(predicted_scores.shape[0])]
 
         return hotelling_p2, spe_p2, residuals, predicted_scores
     
@@ -383,7 +383,8 @@ class PCA:
         dfn = self._ncomps
         dfd = self._nobs - self._ncomps
         const = (self._ncomps * (self._nobs**2 -1)) / (self._nobs * (self._nobs - self._ncomps))
-        prob_hotelling = 1-f.cdf(hotelling/const, dfn, dfd)
+        prob_hotelling = [float(1-f.cdf(np.array(value)/const, dfn, dfd)) for value in hotelling]
+        
 
         # SPE control limit. Phase II
         b, nu = np.mean(self._spe), np.var(self._spe)
@@ -391,24 +392,38 @@ class PCA:
         df = (2*b**2)/nu
         const = nu/(2*b)
 
-        prob_spe = 1-chi2.cdf(SPE/const, df)
+        prob_spe = [float(1-chi2.cdf(np.array(spe)/const, df)) for spe in SPE]
 
-        spe_outlier = SPE >= self._spe_limit
-        hotelling_outlier = hotelling >= self._hotelling_limit_p2
+        spe_outlier = [bool(x) for x in (SPE >= self._spe_limit)]
+        hotelling_outlier = [bool(x) for x in (hotelling >= self._hotelling_limit_p2)]
 
         ids = [str(idx) for idx in X_predict.index]
 
-        response_json = {
-            'id': ids,
-            'hotelling': list(hotelling),
-            'spe': list(SPE),
-            'prob_hotelling': prob_hotelling,
-            'prob_spe': prob_spe,
-            'spe_outlier': spe_outlier,
-            'hotelling_outlier': hotelling_outlier,
-            'spe_ucl': self._spe_limit,
-            'hotelling_ucl': self._hotelling_limit_p2
-        }
+        if len(X_predict)==1:
+            response_json = {
+                        'id': ids,
+                        'hotelling': list(hotelling),
+                        'spe': list(SPE),
+                        'prob_hotelling': list(prob_hotelling),
+                        'prob_spe': list(prob_spe),
+                        'spe_outlier': spe_outlier,
+                        'hotelling_outlier': hotelling_outlier,
+                        'spe_ucl': float(self._spe_limit),
+                        'hotelling_ucl': float(self._hotelling_limit_p2)
+                    }
+
+        else:
+            response_json = {
+                'id': ids,
+                'hotelling': list(hotelling),
+                'spe': list(SPE),
+                'prob_hotelling': list(prob_hotelling),
+                'prob_spe': list(prob_spe),
+                'spe_outlier': spe_outlier,
+                'hotelling_outlier': hotelling_outlier,
+                'spe_ucl': float(self._spe_limit),
+                'hotelling_ucl': float(self._hotelling_limit_p2)
+            }
 
         return response_json
 

@@ -71,8 +71,8 @@ def optimize(X, n_comps, alpha, numerical_features, statistic='T2', threshold=3,
     keep_indices = np.arange(X.shape[0])
 
     # Train PCA model
-    pca = PCA(n_comps=n_comps)
-    pca.fit(X, numerical_features=numerical_features, alpha=alpha)
+    pca = PCA(n_comps=n_comps, numerical_features=numerical_features)
+    pca.fit(X, alpha=alpha)
 
     # Determine control limit and statistic value based on statistic
     if statistic == 'T2':
@@ -107,7 +107,7 @@ def optimize(X, n_comps, alpha, numerical_features, statistic='T2', threshold=3,
         keep_indices = np.delete(keep_indices, drop_indices)
 
         # Retrain PCA model
-        pca.fit(X.iloc[keep_indices], numerical_features=numerical_features, alpha=alpha)
+        pca.fit(X.iloc[keep_indices], alpha=alpha)
 
         # Recalculate control limit and statistic value
         if statistic == 'T2':

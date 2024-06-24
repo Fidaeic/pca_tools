@@ -1,7 +1,8 @@
 import os
 from sklearn.preprocessing import StandardScaler
-from pca_tools.model import PCA
+from sklearn.decomposition import PCA
 import pandas as pd
+import numpy as np
 
 # Ensure the references directory exists
 references_dir = 'references'
@@ -34,7 +35,28 @@ def create_preprocessed():
 
     data_trans.to_parquet(parquet_path)
 
+def create_scores():
+    # Generate random data
+    np.random.seed(42)  # For reproducibility
+    data = np.random.rand(100, 5)  # 100 samples, 5 features
+    columns = [f'feature_{i}' for i in range(1, 6)]
+
+    data = StandardScaler().fit_transform(data)
+
+    pca = PCA(n_components=3, )
+
+    scores = pca.fit_transform(data)
+
+    pc_columns = [f'PC_{i}' for i in range(1, 4)]
+
+    dataframe = pd.DataFrame(scores, columns=pc_columns)
+
+    parquet_path = os.path.join(references_dir, 'scores.parquet')
+    dataframe.to_parquet(parquet_path)
+
+
 if __name__ == '__main__':
 
     create_preprocessed()
     create_preprocessed_numerical()
+    create_scores()
