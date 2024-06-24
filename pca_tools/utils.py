@@ -15,7 +15,7 @@ import pandas as pd
 import logging
 import altair as alt
 
-def optimize(X, n_comps, alpha, numerical_features, statistic='T2', threshold=3):
+def optimize(X, n_comps, alpha, numerical_features, statistic='T2', threshold=3, drop_percentage=0.2):
     """
     This function optimizes a dataset for PCA by iteratively removing out-of-control observations.
 
@@ -72,7 +72,7 @@ def optimize(X, n_comps, alpha, numerical_features, statistic='T2', threshold=3)
 
     # Train PCA model
     pca = PCA(n_comps=n_comps)
-    pca.train(X, numerical_features=numerical_features, alpha=alpha)
+    pca.fit(X, numerical_features=numerical_features, alpha=alpha)
 
     # Determine control limit and statistic value based on statistic
     if statistic == 'T2':
@@ -85,20 +85,29 @@ def optimize(X, n_comps, alpha, numerical_features, statistic='T2', threshold=3)
     # Calculate proportion of out-of-control observations
     out_of_control = np.sum(statistic_value > control_limit) / len(keep_indices)
 
+    n_dropped = 1
     # Iteratively remove out-of-control observations
-    while out_of_control > (1 - alpha):
+    while out_of_control > (1 - alpha)*threshold and n_dropped>0:
         # Identify out-of-control observations
-        drop_indices = np.where(statistic_value > threshold * control_limit)[0]
+        out_of_control_indices = np.where(statistic_value > control_limit)[0]
 
         # If no observations to drop, break the loop
-        if len(drop_indices) == 0:
+        if len(out_of_control_indices) == 0:
             break
 
-        # Remove out-of-control observations
+        # Sort out-of-control observations by statistic value in descending order
+        sorted_indices = out_of_control_indices[np.argsort(statistic_value[out_of_control_indices])[::-1]]
+
+        # Select top 10% of out-of-control observations
+        drop_indices = sorted_indices[:int(len(sorted_indices) * drop_percentage)]
+
+        n_dropped = len(drop_indices)
+
+        # Remove top 10% out-of-control observations
         keep_indices = np.delete(keep_indices, drop_indices)
 
         # Retrain PCA model
-        pca.train(X.iloc[keep_indices], numerical_features=numerical_features, alpha=alpha)
+        pca.fit(X.iloc[keep_indices], numerical_features=numerical_features, alpha=alpha)
 
         # Recalculate control limit and statistic value
         if statistic == 'T2':
@@ -113,7 +122,7 @@ def optimize(X, n_comps, alpha, numerical_features, statistic='T2', threshold=3)
 
         # Log progress
         logging.info(f'Processing statistics: {statistic}')
-        logging.info(f"{len(drop_indices)} removed observations")
+        logging.info(f"{n_dropped} removed observations")
         logging.info(f"Proportion of out of control observations: {out_of_control}")
         logging.info(f"Control limit: {control_limit}")
 
@@ -149,7 +158,7 @@ def spe_contribution_plot(pca_model, observation):
     
     pca_copy = copy.deepcopy(pca_model)
 
-    _, SPE, residuals, _ = pca_copy.predict(observation)
+    _, SPE, residuals, _ = pca_copy.project(observation)
 
     residuals = pd.DataFrame({'variable': pca_copy._variables, 'contribution': residuals[0]**2})
 
@@ -186,7 +195,7 @@ def hotelling_t2_contribution_plot(pca_model, observation):
     
     pca_copy = copy.deepcopy(pca_model)
 
-    hotelling, _, _, _ = pca_copy.predict(observation)
+    hotelling, _, _, _ = pca_copy.project(observation)
 
     X_transform = observation.copy()
 

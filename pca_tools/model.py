@@ -13,16 +13,21 @@ from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 
+
 class PCA:
-    def __init__(self, n_comps=None, standardize=True, tolerance=1e-4, verbose=False):
+    def __init__(self, n_comps=None, numerical_features=[], standardize=True, tolerance=1e-4, verbose=False):
         
         if not 0 < tolerance < 1:
             raise ValueError('Tolerance must be strictly between 0 and 1')
 
+        if not isinstance(numerical_features, list):
+            raise ValueError(f'Numerical features must be a list, not {type(numerical_features)}')
+        
         self._standardize = standardize
         self._tolerance = tolerance
         self.verbose = verbose
         self._ncomps = n_comps
+        self._numerical_features = numerical_features
 
         self._scaler = Pipeline([
             # ('imputer', SimpleImputer(strategy='mean')),
@@ -41,27 +46,44 @@ class PCA:
         return self
 
 
-    def train(self, data, numerical_features=[], alpha=0.95):
+    def fit(self, data, alpha=0.95):
 
         if not isinstance(data, pd.DataFrame):
             raise ValueError(f'Data must be of type pandas DataFrame, not {type(data)}')
-
-        if not isinstance(numerical_features, list):
-            raise ValueError(f'Numerical features must be a list, not {type(numerical_features)}')
         
         if not 0 < alpha < 1:
             raise ValueError('Alpha must be strictly between 0 and 1')
 
+        if self._standardize:
+            if not self._numerical_features:
+                self._numerical_features = data.columns.tolist()
+            
+            self._scaler.fit(data[self._numerical_features])
+        
         self._alpha = alpha
-        self.fit(data, numerical_features)
+        self.train(data)
 
         self.spe()
         self.hotelling_t2()
 
         self.control_limits(alpha=self._alpha)
 
+    def preprocess(self, data):
+
+        index = data.index
+        columns = data.columns
+
+        X_transform = data.copy()
+
+        if self._numerical_features:
+            X_transform[self._numerical_features] = self._scaler.transform(X_transform[self._numerical_features])
+        else:
+            X_transform = pd.DataFrame(self._scaler.transform(X_transform), columns=columns, index=index)
+
+        return X_transform
+
             
-    def fit(self, data, numerical_features=[]):
+    def train(self, data):
         '''
         Fits the PCA model to the data
 
@@ -83,23 +105,15 @@ class PCA:
         if not isinstance(data, pd.DataFrame):
             raise ValueError(f'Data must be of type pandas DataFrame, not {type(data)}')
         
-        if not isinstance(numerical_features, list):
-            raise ValueError(f'Numerical features must be a list, not {type(numerical_features)}')
-        
         self._variables = data.columns
         self._index = data.index       
         self._index_name = data.index.name
         self._nobs, self._nvars = data.shape
 
-        self._numerical_features = numerical_features
-
         X = data.copy()
         # Descale and demean matrix
         if self._standardize:
-            if self._numerical_features:
-                X[self._numerical_features] = self._scaler.fit_transform(X[self._numerical_features])
-            else:
-                X = pd.DataFrame(self._scaler.fit_transform(X), columns=self._variables, index=self._index)
+            X = self.preprocess(data=X)
         
         X = X.values
 
@@ -139,7 +153,7 @@ class PCA:
         self._eigenvals = vals
         self._loadings = pd.DataFrame(P_t, columns=self._variables, index=[f"PC_{i}" for i in range(1, self._ncomps+1)])
         self._training_data = data
-        self._processed_training_data = X
+        self._processed_training_data = pd.DataFrame(X, columns=self._variables, index=self._index)
         self._scores = pd.DataFrame(T.T, columns=[f"PC_{i}" for i in range(1, self._ncomps+1)], index=self._index)
         self._rsquared_acc = np.array(r2)
         self._explained_variance = np.diff(np.insert(self._rsquared_acc, 0, 0))
@@ -171,10 +185,7 @@ class PCA:
         X_transform = data.copy()
         # Descale and demean matrix
         if self._standardize:
-            if self._numerical_features:
-                X_transform[self._numerical_features] = self._scaler.transform(X_transform[self._numerical_features])
-            else:
-                X_transform = pd.DataFrame(self._scaler.transform(X_transform), columns=self._variables, index=self._index)
+            X_transform = self.preprocess(data=X_transform)
         
         return pd.DataFrame(X_transform @ self._loadings.T, columns=self._scores.columns, index=data.index)
 
@@ -194,7 +205,7 @@ class PCA:
         array-like, shape (n_samples, n_components)
             The projected data
         '''
-        self.fit(data)
+        self.train(data)
         return self.transform(data)
 
     def inverse_transform(self, data):
@@ -317,10 +328,7 @@ class PCA:
 
         # Descale and demean matrix
         if self._standardize:
-            if self._numerical_features:
-                X[self._numerical_features] = self._scaler.transform(X[self._numerical_features])
-            else:
-                X = pd.DataFrame(self._scaler.transform(X), columns=self._variables, index=self._index)
+            X = self.preprocess(data=X)
 
         X = X.values
 
@@ -328,7 +336,7 @@ class PCA:
 
         return T2
 
-    def predict(self, X_predict):
+    def project(self, X_predict):
 
         if not isinstance(X_predict, pd.DataFrame):
             raise ValueError(f'Data must be of type pandas DataFrame, not {type(X_predict)}')
@@ -340,11 +348,9 @@ class PCA:
 
         X_transform = X_predict.copy()
         
+        # Descale and demean matrix
         if self._standardize:
-            if self._numerical_features:
-                X_transform[self._numerical_features] = self._scaler.transform(X_transform[self._numerical_features])
-            else:
-                X_transform = pd.DataFrame(self._scaler.transform(X_transform), columns=self._variables, index=self._index)
+            X_transform = self.preprocess(data=X_transform)
 
         # Hotelling's T2 statistic
         hotelling_p2 = np.array([np.sum((predicted_scores.values[i, :]**2)/self._eigenvals) 
@@ -357,7 +363,7 @@ class PCA:
 
         return hotelling_p2, spe_p2, residuals, predicted_scores
     
-    def response(self, X_predict):
+    def predict(self, X_predict):
         '''
         Predicts the probability of an observation being an outlier
 
@@ -371,7 +377,7 @@ class PCA:
         array-like, shape (n_samples, 1)
             The probability of an observation being an outlier
         '''
-        hotelling, SPE, _, _ = self.predict(X_predict)
+        hotelling, SPE, _, _ = self.project(X_predict)
 
         # Hotelling's T2 control limit. Phase II
         dfn = self._ncomps
@@ -456,7 +462,7 @@ class PCA:
 
         if test_set is not None:
 
-            _, _, _, scores_test = self.predict(test_set)
+            _, _, _, scores_test = self.project(test_set)
 
             scores_test = scores_test.reset_index()
             scatter_test = alt.Chart(scores_test).mark_point(color='black', opacity=.1).encode(
@@ -544,7 +550,7 @@ class PCA:
 
         if test_set is not None:
 
-            _, _, _, scores_test = self.predict(test_set)
+            _, _, _, scores_test = self.project(test_set)
 
             scores_test = scores_test.reset_index()
             scatter_test = alt.Chart(scores_test).mark_point(color='black', opacity=.1).encode(
@@ -556,6 +562,8 @@ class PCA:
             return (scatter_test + scores_plot + loadings_plot + vline + hline)
     
         return (scores_plot + loadings_plot+ vline + hline)
+    
+    
     
     def loadings_barplot(self, comp:int):
         '''
@@ -603,14 +611,12 @@ class PCA:
         
         if sorted(X_obs.columns) != sorted(self._variables):
             raise ValueError("The observation must have the same variables as the training data")
-                
+            
+        X_transform = X_obs.copy()
         if self._standardize:
-            if self._numerical_features:
-                X_obs[self._numerical_features] = self._scaler.transform(X_obs[self._numerical_features])
-            else:
-                X_obs = pd.DataFrame(self._scaler.transform(X_obs), columns=self._variables, index=X_obs._index)
+            X_transform = self.preprocess(data=X_transform)
 
-        df_plot = pd.DataFrame({'variable': self._variables, 'value': X_obs.values[0]})
+        df_plot = pd.DataFrame({'variable': self._variables, 'value': X_transform.values[0]})
         # Altair plot for the differences
         return alt.Chart(df_plot).mark_bar().encode(
             x=alt.X('variable', title='Variable'),
@@ -661,10 +667,10 @@ class PCA:
 
         '''
 
-        hotelling, _, _, predicted_scores = self.predict(test_set)
+        hotelling, _, _, _ = self.project(test_set)
 
-        n_obs = predicted_scores.shape[0]
-        
+        n_obs = len(hotelling)
+
         hotelling = pd.DataFrame({'observation': range(n_obs), 'T2': hotelling})
 
         hotelling_chart = alt.Chart(hotelling).mark_line().encode(
@@ -743,7 +749,7 @@ class PCA:
         if not isinstance(test_set, pd.DataFrame):
             raise ValueError("The test data must be a pandas DataFrame")
 
-        _, SPE, _, predicted_scores = self.predict(test_set)
+        _, SPE, _, predicted_scores = self.project(test_set)
 
         nobs = predicted_scores.shape[0]
         spe = pd.DataFrame({'observation': range(nobs), 'SPE': SPE})
@@ -770,7 +776,7 @@ class PCA:
         # Altair plot for the SPE statistic
         return (spe_chart + threshold)
 
-    def residual_barplot(self, obs:int):
+    def residual_barplot(self, data:pd.DataFrame):
         '''
         Generates a bar plot of the residuals of the selected observation
 
@@ -783,15 +789,25 @@ class PCA:
         -------
         None
         '''
-        if obs < 0 or obs >= self._nobs:
-            raise ValueError("The observation number must be between 0 and the number of observations")
+       
+        if not isinstance(data, pd.DataFrame):
+            raise ValueError("The data must be a pandas DataFrame")
+    
+        if data.shape[1] != len(self._variables):
+            raise ValueError(f'Number of features in data must be {len(self._variables)}')
+        
+        if data.shape[0] != 1:
+            raise ValueError(f'Number of observations in data must be 1')
+        
+        _, SPE, residuals, _ = self.project(data)
+        
 
-        residuals = pd.DataFrame({'variable': self._variables, 'residual': self._residuals_fit[obs]})
+        residuals = pd.DataFrame({'variable': self._variables, 'residual': residuals[0]})
         # Altair plot for the residuals
         return alt.Chart(residuals).mark_bar().encode(
             x=alt.X('variable', title='Variable'),
             y=alt.Y('residual', title='Residual'),
             tooltip=['variable', 'residual']
         ).properties(
-            title=f'Residuals for observation {obs} - SPE: {self._spe[obs]:.2f}'
+            title=f'Residuals for observation {str(data.index.values[0])} - SPE: {SPE[0]:.2f}'
         ).interactive()
