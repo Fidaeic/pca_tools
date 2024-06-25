@@ -68,10 +68,10 @@ def optimize(X, n_comps, alpha, numerical_features, statistic='T2', threshold=3,
     # Determine control limit and statistic value based on statistic
     if statistic == 'T2':
         control_limit = pca._hotelling_limit_p1
-        statistic_value = pca._hotelling
+        statistic_value = np.array(pca._hotelling)
     else:
         control_limit = pca._spe_limit
-        statistic_value = pca._spe
+        statistic_value = np.array(pca._spe)
 
     # Calculate proportion of out-of-control observations
     out_of_control = np.sum(statistic_value > control_limit) / len(keep_indices)
@@ -103,10 +103,10 @@ def optimize(X, n_comps, alpha, numerical_features, statistic='T2', threshold=3,
         # Recalculate control limit and statistic value
         if statistic == 'T2':
             control_limit = pca._hotelling_limit_p1
-            statistic_value = pca._hotelling
+            statistic_value = np.array(pca._hotelling)
         else:
             control_limit = pca._spe_limit
-            statistic_value = pca._spe
+            statistic_value = np.array(pca._spe)
 
         # Calculate proportion of out-of-control observations
         out_of_control = np.sum(statistic_value > control_limit) / len(keep_indices)

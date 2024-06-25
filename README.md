@@ -53,6 +53,12 @@ Phase II of the PCA framework for Multivariate Statistical Process Control (MSPC
 
 After the optimization carried out during Phase I and the calibration and diagnosis on Phase II, the model can be saved as a `pickle` object and used in a production environment, where anomalies can be detected in real-time. The resulting object is compatible with Scikit-learns `Pipeline` object.
 
+## Definition of the outliers
+
+- **Hotelling's T^2**: The Hotelling's T^2 chart evaluates whether the projection of an observation onto the hyperplane, as defined by the latent subspace, falls within the boundaries set by the reference (in-control) data. Consequently, when the value of this statistic surpasses the control limits, it signifies that the observation exhibits unusually extreme values across some or all of its K measured variables. This occurs despite the observation adhering to the correlation structure among the model's variables. Such observations are identified as abnormal outliers within the PCA model, indicating they are extreme or severe outliers.
+
+- **SPE (Squared Prediction Error)**: The SPE chart is designed to measure the distance, or noise variation, of an observation from the latent hyperplane, ensuring it remains within the predefined control limits. When SPE chart values exceed these limits, it indicates that the observation deviates from the behavior of the in-control data used to construct the model. Specifically, this deviation manifests as a disruption in the correlation structure established by the model. The SPE chart is adept at identifying the emergence of any novel events that cause the process to diverge from the hyperplane defined by the reference model. Observations identified through this method are classified as outliers external to the model, denoting them as alien or moderate outliers.
+
 ## License
 
 This project is licensed under the MIT License - see the `LICENSE` file for details.
