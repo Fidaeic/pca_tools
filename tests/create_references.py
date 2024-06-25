@@ -54,9 +54,31 @@ def create_scores():
     parquet_path = os.path.join(references_dir, 'scores.parquet')
     dataframe.to_parquet(parquet_path)
 
+def create_loadings():
+    # Generate random data
+    np.random.seed(42)  # For reproducibility
+    data = np.random.rand(100, 5)  # 100 samples, 5 features
+    columns = [f'feature_{i}' for i in range(1, 6)]
+
+    data = StandardScaler().fit_transform(data)
+
+    pca = PCA(n_components=3, )
+
+    pca.fit(data)
+
+    loadings = pca.components_
+
+    pc_columns = [f'PC_{i}' for i in range(1, 4)]
+
+    dataframe = pd.DataFrame(loadings.T, columns=pc_columns, index=columns)
+
+    parquet_path = os.path.join(references_dir, 'loadings.parquet')
+    dataframe.to_parquet(parquet_path)
+
 
 if __name__ == '__main__':
 
     create_preprocessed()
     create_preprocessed_numerical()
     create_scores()
+    create_loadings()

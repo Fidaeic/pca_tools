@@ -294,10 +294,19 @@ class PCA(BaseEstimator, TransformerMixin):
         if not hasattr(self, '_scores'):
             raise ModelNotFittedError()
 
-        if isinstance(data, pd.DataFrame):
-            data = data.values
+        # if isinstance(data, pd.DataFrame):
+        #     data = data.values
 
-        return data @ self._loadings
+        if self._standardize==True:
+            if self._numerical_features:
+                result = data @ self._loadings
+                result = self._scaler.inverse_transform(result[self._numerical_features])
+            else:
+                result = self._scaler.inverse_transform(data @ self._loadings)
+        else:
+            result = data @ self._loadings
+
+        return pd.DataFrame(result, columns=self._variables, index=data.index)
     
     def control_limits(self, alpha:float=0.95):
         '''
@@ -374,7 +383,7 @@ class PCA(BaseEstimator, TransformerMixin):
 
         predicted_scores = self.transform(data)
 
-        return np.sum((predicted_scores**2) / self._eigenvals, axis=1)
+        return list(np.sum((predicted_scores.values**2) / self._eigenvals, axis=1))
         
     def spe(self, data):
         '''
