@@ -38,7 +38,7 @@ def test_inverse_transform_no_standardization(sample_data):
     assert_frame_equal(sample_data, pca.inverse_transform(pca.transform(sample_data)), atol=1e-3)
 
 def test_project_method(sample_data):
-    pca = PCA(n_comps=sample_data.shape[1], standardize=False, tolerance=0.00001)
+    pca = PCA(n_comps=2, standardize=False, tolerance=0.00001)
     pca.fit(sample_data)
 
     hotelling_t2, spe_p2, residuals, predicted_scores = pca.project(sample_data)

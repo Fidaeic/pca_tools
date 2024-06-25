@@ -10,7 +10,6 @@ from numpy import linalg as LA
 from scipy.stats import f, beta, chi2
 import altair as alt
 from sklearn.pipeline import Pipeline
-from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 from .exceptions import NotDataFrameError, ModelNotFittedError, NotAListError, NotBoolError, NComponentsError
 from sklearn.base import BaseEstimator, TransformerMixin
