@@ -2,6 +2,12 @@
 
 This repository is dedicated to the development of a comprehensive Principal Component Analysis (PCA) framework specifically designed for Multivariate Statistical Process Control (MSPC). The primary goal of this framework is to provide a robust set of tools that enable users to effectively train PCA models and compute critical statistics, namely Hotelling's T^2 and the Squared Prediction Error (SPE), which are essential for anomaly detection in dynamic processes.
 
+This project builds upon the foundational work described in the following studies:
+
+- Ferrer, A. (2007). Multivariate statistical process control based on principal component analysis (MSPC-PCA): Some reflections and a case study in an autobody assembly process. Quality Engineering, 19(4), 311-325.
+
+- Ferrer, A. (2014). Latent structures-based multivariate statistical process control: A paradigm shift. Quality Engineering, 26(1), 72-91.
+
 ## Features
 
 - **PCA Model Training**: Offers a streamlined process for training PCA models tailored for MSPC, ensuring that the models capture the essential variance within the process data.
