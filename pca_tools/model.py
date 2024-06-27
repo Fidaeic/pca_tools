@@ -479,6 +479,11 @@ class PCA(BaseEstimator, TransformerMixin):
         
         hotelling, SPE, _, _ = self.project(X_predict)
 
+        X_transform = X_predict.copy()
+        if self._standardize:
+            X_transform = self.preprocess(data=X_transform)
+
+        dict_differences = {col: float(X_transform[col].values[0]) for col in X_transform.columns}
         # Hotelling's T2 control limit. Phase II
         dfn = self._ncomps
         dfd = self._nobs - self._ncomps
@@ -507,7 +512,8 @@ class PCA(BaseEstimator, TransformerMixin):
                     'spe_outlier': spe_outlier,
                     'hotelling_outlier': hotelling_outlier,
                     'spe_ucl': float(self._spe_limit),
-                    'hotelling_ucl': float(self._hotelling_limit_p2)
+                    'hotelling_ucl': float(self._hotelling_limit_p2),
+                    'differences': dict_differences
         }
         return response_json
 
