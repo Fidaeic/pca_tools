@@ -13,6 +13,9 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from .exceptions import NotDataFrameError, ModelNotFittedError, NotAListError, NotBoolError, NComponentsError
 from sklearn.base import BaseEstimator, TransformerMixin
+import ray
+import pdb
+from .utils import compute_component_wrapper, compute_component
 
 class PCA(BaseEstimator, TransformerMixin):
     def __init__(self, n_comps:int=None, 
@@ -20,7 +23,9 @@ class PCA(BaseEstimator, TransformerMixin):
                  standardize:bool=True, 
                  tolerance:float=1e-4, 
                  verbose:bool=False,
-                 alpha:float=.99):
+                 alpha:float=.99,
+                 ray:bool=False,
+                 ray_workers:int=1) -> None:
         
         if not 0 < tolerance < 1:
             raise ValueError('Tolerance must be strictly between 0 and 1')
@@ -41,6 +46,8 @@ class PCA(BaseEstimator, TransformerMixin):
         self._ncomps = n_comps
         self._numerical_features = numerical_features
         self._alpha = alpha
+        self._ray = ray
+        self._ray_workers = ray_workers
 
         self._scaler = Pipeline([
             # ('imputer', SimpleImputer(strategy='mean')),
@@ -106,7 +113,6 @@ class PCA(BaseEstimator, TransformerMixin):
             X_transform = pd.DataFrame(self._scaler.transform(X_transform), columns=columns, index=index)
 
         return X_transform
-
             
     def train(self, data:pd.DataFrame):
         '''
@@ -139,59 +145,46 @@ class PCA(BaseEstimator, TransformerMixin):
         - Principal components are extracted using an iterative process that maximizes the variance explained by each component.
         - The method calculates and stores various metrics related to the PCA model, including the loadings, scores, eigenvalues, and the cumulative variance explained by the extracted components.
         '''
-        if self._ncomps==None:
+        if self._ncomps is None:
             self._ncomps = data.shape[1]
 
-        if self._ncomps <= 0 or self._ncomps>data.shape[1]:
+        if self._ncomps <= 0 or self._ncomps > data.shape[1]:
             raise NComponentsError(data.shape[1])
-        
+
         if not isinstance(data, pd.DataFrame):
             raise NotDataFrameError(type(data).__name__)
-        
+
         self._variables = data.columns
-        self._index = data.index       
+        self._index = data.index
         self._index_name = data.index.name
         self._nobs, self._nvars = data.shape
 
         X = data.copy()
-        # Descale and demean matrix
         if self._standardize:
             X = self.preprocess(data=X)
-        
+
         X = X.values
 
-        X_pca = X.copy()
-        r2 = []
+        results = []
+        current_X_pca = X.copy()
+
+        for _ in range(self._ncomps):
+            result = compute_component_wrapper(self._ray, current_X_pca, X, self._tolerance, verbose=self.verbose, ray_workers=self._ray_workers)
+
+            current_X_pca = result[0]
+
+            results.append(result)
+
         T = np.zeros((self._ncomps, X.shape[0]))
         P_t = np.zeros((self._ncomps, X.shape[1]))
         vals = np.zeros(self._ncomps)
+        r2 = []
 
-        for i in range(self._ncomps):
-            # Initialize t as the column with the highest variance
-            column = np.argmax(np.var(X_pca, axis=0))
-            t = X_pca[:, column].reshape(-1, 1)
-            cont = 0
-            conv = 10
-
-            while conv > self._tolerance:
-                t_prev = t
-                p_t = (t_prev.T @ X_pca) / (t_prev.T @ t_prev)
-                p_t /= LA.norm(p_t)
-
-                t = X_pca @ p_t.T
-
-                conv = np.linalg.norm(t - t_prev)
-                cont += 1
-
-            if self.verbose:
-                print(f"Component {i+1} converges after {cont} iterations")
-
-            X_pca -= t @ p_t  # Calculate the residual matrix
-            r2.append(1 - np.sum(X_pca**2) / np.sum(X**2))
-
-            vals[i] = np.var(t)
-            T[i] = t.reshape(X.shape[0])
+        for i, (_, t, p_t, var_t, r2_i) in enumerate(results):
+            T[i] = t
             P_t[i] = p_t
+            vals[i] = var_t
+            r2.append(r2_i)
 
         self._eigenvals = vals
         self._loadings = pd.DataFrame(P_t, columns=self._variables, index=[f"PC_{i}" for i in range(1, self._ncomps+1)])
@@ -200,7 +193,7 @@ class PCA(BaseEstimator, TransformerMixin):
         self._scores = pd.DataFrame(T.T, columns=[f"PC_{i}" for i in range(1, self._ncomps+1)], index=self._index)
         self._rsquared_acc = np.array(r2)
         self._explained_variance = np.diff(np.insert(self._rsquared_acc, 0, 0))
-        self._residuals_fit = X-T.T@P_t
+        self._residuals_fit = X - T.T @ P_t
         self._mean_train = X.mean()
         self._std_train = X.std()
 
@@ -483,7 +476,7 @@ class PCA(BaseEstimator, TransformerMixin):
         if self._standardize:
             X_transform = self.preprocess(data=X_transform)
 
-        dict_differences = {col: float(X_transform[col].values[0]) for col in X_transform.columns}
+        dict_differences = {col: X_transform[col].values for col in X_transform.columns}
         # Hotelling's T2 control limit. Phase II
         dfn = self._ncomps
         dfd = self._nobs - self._ncomps

@@ -1,124 +1,15 @@
 import numpy as np
 from scipy.stats import f, beta, chi2
 import copy
-from .model import PCA
 import pandas as pd
 import logging
 import altair as alt
 from .exceptions import NotDataFrameError, NComponentsError, NotAListError, ModelNotFittedError
+import ray
+from numpy import linalg as LA
+import pdb
+from numba import jit
 
-def optimize(X, n_comps, alpha, numerical_features, statistic='T2', threshold=3, drop_percentage=0.2):
-    """
-    This function optimizes a dataset for PCA by iteratively removing out-of-control observations.
-
-    Parameters
-    ----------
-    X : pd.DataFrame
-        The input data to be optimized.
-    n_comps : int
-        The number of principal components to use in the PCA.
-    alpha : float
-        The significance level for the control limits. Must be between 0 and 1.
-    numerical_features : list
-        The list of numerical features to be considered in the PCA.
-    statistic : str, optional
-        The statistic to use for determining out-of-control observations. Must be either 'T2' for Hotelling's T^2 or 'SPE' for Squared Prediction Error. Default is 'T2'.
-    threshold : float, optional
-        The threshold for determining out-of-control observations. Observations with a statistic value greater than threshold times the control limit are considered out-of-control. Default is 3.
-
-    Returns
-    -------
-    X_opt : pd.DataFrame
-        The optimized input data with out-of-control observations removed.
-
-    Raises
-    ------
-    ValueError
-        If `statistic` is not 'T2' or 'SPE', `alpha` is not between 0 and 1, `threshold` is not positive, `n_comps` is not greater than 0, `numerical_features` is not a list, or `X` is not a pandas DataFrame.
-    """
-    # Set up logging
-    logging.basicConfig(level=logging.INFO)
-
-    # Validate inputs
-    if statistic not in ['T2', 'SPE']:
-        raise ValueError("Statistic must be 'T2' or 'SPE'")
-    
-    if alpha<0 or alpha>1:
-        raise ValueError("Alpha must be between 0 and 1")
-    
-    if threshold<0:
-        raise ValueError("Threshold must be positive")
-    
-    if not isinstance(X, pd.DataFrame):
-            raise NotDataFrameError(type(X).__name__)
-    
-    if n_comps <= 0 or n_comps>X.shape[1]:
-            raise NComponentsError(X.shape[1])
-    
-    if not isinstance(numerical_features, list):
-        raise NotAListError()
-
-    # Initialize variables
-    keep_indices = np.arange(X.shape[0])
-
-    # Train PCA model
-    pca = PCA(n_comps=n_comps, numerical_features=numerical_features, alpha=alpha)
-    pca.fit(X)
-
-    # Determine control limit and statistic value based on statistic
-    if statistic == 'T2':
-        control_limit = pca._hotelling_limit_p1
-        statistic_value = np.array(pca._hotelling)
-    else:
-        control_limit = pca._spe_limit
-        statistic_value = np.array(pca._spe)
-
-    # Calculate proportion of out-of-control observations
-    out_of_control = np.sum(statistic_value > control_limit) / len(keep_indices)
-
-    n_dropped = 1
-    # Iteratively remove out-of-control observations
-    while out_of_control > (1 - alpha)*threshold and n_dropped>0:
-        # Identify out-of-control observations
-        out_of_control_indices = np.where(statistic_value > control_limit)[0]
-
-        # If no observations to drop, break the loop
-        if len(out_of_control_indices) == 0:
-            break
-
-        # Sort out-of-control observations by statistic value in descending order
-        sorted_indices = out_of_control_indices[np.argsort(statistic_value[out_of_control_indices])[::-1]]
-
-        # Select top 10% of out-of-control observations
-        drop_indices = sorted_indices[:int(len(sorted_indices) * drop_percentage)]
-
-        n_dropped = len(drop_indices)
-
-        # Remove top 10% out-of-control observations
-        keep_indices = np.delete(keep_indices, drop_indices)
-
-        # Retrain PCA model
-        pca.fit(X.iloc[keep_indices],)
-
-        # Recalculate control limit and statistic value
-        if statistic == 'T2':
-            control_limit = pca._hotelling_limit_p1
-            statistic_value = np.array(pca._hotelling)
-        else:
-            control_limit = pca._spe_limit
-            statistic_value = np.array(pca._spe)
-
-        # Calculate proportion of out-of-control observations
-        out_of_control = np.sum(statistic_value > control_limit) / len(keep_indices)
-
-        # Log progress
-        logging.info(f'Processing statistics: {statistic}')
-        logging.info(f"{n_dropped} removed observations")
-        logging.info(f"Proportion of out of control observations: {out_of_control}")
-        logging.info(f"Control limit: {control_limit}")
-
-    # Return optimized data
-    return X.iloc[keep_indices]
 
 def spe_contribution_plot(pca_model, observation:pd.DataFrame):
 
@@ -258,3 +149,77 @@ def hotelling_t2_contribution_plot(pca_model, observation:pd.DataFrame):
     ).properties(
         title=f'Contribution to the Hotelling\'s T2 of observation {str(observation.index.values[0])} - \n T2: {hotelling[0]:.2f} - Comp: {max_comp}'
     ).interactive()
+
+@ray.remote
+def compute_component_ray(X_pca, X, tolerance, t_prev=None, cont=0, verbose=False):
+    X_pca = X_pca.copy()
+    column = np.argmax(np.var(X_pca, axis=0))
+    t_prev = X_pca[:, column].reshape(-1, 1)
+    cont = 0
+
+    while True:
+        # Compute p_t and t
+        p_t = (t_prev.T @ X_pca) / (t_prev.T @ t_prev)
+        p_t /= LA.norm(p_t)
+        t = X_pca @ p_t.T
+
+        # Check convergence
+        conv = np.linalg.norm(t - t_prev)
+        if verbose:
+            print(f"Iteration {cont}, Convergence: {conv}")
+
+        if conv <= tolerance:
+            # Convergence achieved
+            X_pca -= t @ p_t
+            r2 = 1 - np.sum(X_pca**2) / np.sum(X**2)
+            var_t = np.var(t)
+            if verbose:
+                print(f"Component converges after {cont} iterations")
+            return X_pca, t.reshape(X_pca.shape[0]), p_t, var_t, r2
+        else:
+            # Prepare for next iteration
+            t_prev = t
+            cont += 1
+
+def compute_component(X_pca, X, tolerance, t_prev=None, cont=0, verbose=False):
+    X_pca = X_pca.copy()
+    column = np.argmax(np.var(X_pca, axis=0))
+    t_prev = X_pca[:, column].reshape(-1, 1)
+    cont = 0
+
+    while True:
+        # Compute p_t and t
+        p_t = (t_prev.T @ X_pca) / (t_prev.T @ t_prev)
+        p_t /= LA.norm(p_t)
+        t = X_pca @ p_t.T
+
+        # Check convergence
+        conv = np.linalg.norm(t - t_prev)
+        if verbose:
+            print(f"Iteration {cont}, Convergence: {conv}")
+
+        if conv <= tolerance:
+            # Convergence achieved
+            X_pca -= t @ p_t
+            r2 = 1 - np.sum(X_pca**2) / np.sum(X**2)
+            var_t = np.var(t)
+            if verbose:
+                print(f"Component converges after {cont} iterations")
+            return X_pca, t.reshape(X_pca.shape[0]), p_t, var_t, r2
+        else:
+            # Prepare for next iteration
+            t_prev = t
+            cont += 1
+    
+
+def compute_component_wrapper(use_ray, X_pca, X, tolerance, verbose=False, ray_workers=None):
+    if use_ray:
+        # Initialize Ray if not already done
+        if not ray.is_initialized():
+            ray.init(num_cpus=ray_workers, ignore_reinit_error=True)
+        # Call the function with Ray
+        result_id = compute_component_ray.remote(X_pca, X, tolerance, verbose)
+        return ray.get(result_id)
+    else:
+        # Call the function directly
+        return compute_component(X_pca, X, tolerance, verbose)
