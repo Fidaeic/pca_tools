@@ -15,7 +15,6 @@ from .exceptions import NotDataFrameError, ModelNotFittedError, NotAListError, N
 from sklearn.base import BaseEstimator, TransformerMixin
 import pdb
 from sklearn.decomposition import PCA as PCA_sk
-from .utils import compute_component_wrapper, compute_component
 
 class PCA(BaseEstimator, TransformerMixin):
     def __init__(self, n_comps:int=None, 
@@ -267,17 +266,14 @@ class PCA(BaseEstimator, TransformerMixin):
         if not hasattr(self, '_scores'):
             raise ModelNotFittedError()
 
-        # if isinstance(data, pd.DataFrame):
-        #     data = data.values
-
         if self._standardize==True:
             if self._numerical_features:
-                result = data @ self._loadings
+                result = data @ self._loadings.T
                 result = self._scaler.inverse_transform(result[self._numerical_features])
             else:
-                result = self._scaler.inverse_transform(data @ self._loadings)
+                result = self._scaler.inverse_transform(data @ self._loadings.T)
         else:
-            result = data @ self._loadings
+            result = data @ self._loadings.T
 
         return pd.DataFrame(result, columns=self._variables, index=data.index)
     
