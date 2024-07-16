@@ -15,6 +15,7 @@ from .exceptions import NotDataFrameError, ModelNotFittedError, NotAListError, N
 from sklearn.base import BaseEstimator, TransformerMixin
 import ray
 import pdb
+from sklearn.decomposition import PCA as PCA_sk
 from .utils import compute_component_wrapper, compute_component
 
 class PCA(BaseEstimator, TransformerMixin):
@@ -48,6 +49,7 @@ class PCA(BaseEstimator, TransformerMixin):
         self._alpha = alpha
         self._ray = ray
         self._ray_workers = ray_workers
+        self.model = PCA_sk(n_components=self._ncomps, svd_solver='full', tol=self._tolerance, iterated_power='auto')
 
         self._scaler = Pipeline([
             # ('imputer', SimpleImputer(strategy='mean')),
@@ -55,10 +57,15 @@ class PCA(BaseEstimator, TransformerMixin):
         ])
 
     def get_params(self, deep=True):
-        return {"standardize": self._standardize,
-                "tolerance": self._tolerance,
-                "verbose": self._verbose,
-                "n_comps": self._ncomps}
+        params = super().get_params(deep=deep)
+        params.update({
+            "standardize": self._standardize,
+            "numerical_features": self._numerical_features,
+            "alpha": self._alpha,
+            "ray": self._ray,
+            "ray_workers": self._ray_workers
+        })
+        return params
     
     def set_params(self, **params):
         for key, value in params.items():
@@ -165,37 +172,16 @@ class PCA(BaseEstimator, TransformerMixin):
 
         X = X.values
 
-        results = []
-        current_X_pca = X.copy()
+        self.model.fit(X)
 
-        for _ in range(self._ncomps):
-            result = compute_component_wrapper(self._ray, current_X_pca, X, self._tolerance, verbose=self.verbose, ray_workers=self._ray_workers)
-
-            current_X_pca = result[0]
-
-            results.append(result)
-
-        T = np.zeros((self._ncomps, X.shape[0]))
-        P_t = np.zeros((self._ncomps, X.shape[1]))
-        vals = np.zeros(self._ncomps)
-        r2 = []
-
-        for i, (_, t, p_t, var_t, r2_i) in enumerate(results):
-            T[i] = t
-            P_t[i] = p_t
-            vals[i] = var_t
-            r2.append(r2_i)
-
-        self._eigenvals = vals
-        self._loadings = pd.DataFrame(P_t, columns=self._variables, index=[f"PC_{i}" for i in range(1, self._ncomps+1)])
-        self._training_data = data
-        self._processed_training_data = pd.DataFrame(X, columns=self._variables, index=self._index)
-        self._scores = pd.DataFrame(T.T, columns=[f"PC_{i}" for i in range(1, self._ncomps+1)], index=self._index)
-        self._rsquared_acc = np.array(r2)
-        self._explained_variance = np.diff(np.insert(self._rsquared_acc, 0, 0))
-        self._residuals_fit = X - T.T @ P_t
-        self._mean_train = X.mean()
-        self._std_train = X.std()
+        self._loadings = pd.DataFrame(self.model.components_.T, columns=[f"PC_{i+1}" for i in range(self._ncomps)], index=self._variables)
+        self._scores = pd.DataFrame(self.model.transform(X), columns=[f"PC_{i+1}" for i in range(self._ncomps)], index=self._index)
+        self._explained_variance = self.model.explained_variance_ratio_
+        self._rsquared_acc = np.cumsum(self.model.explained_variance_ratio_)
+        self._eigenvals = np.var(self._scores.values, axis=0)
+        self._residuals_fit = X - self._scores @ self._loadings.T
+        self._mean_train = np.mean(X, axis=0)
+        self._std_train = np.std(X, axis=0)
 
     def transform(self, data:pd.DataFrame, y=None):
         '''
@@ -234,7 +220,7 @@ class PCA(BaseEstimator, TransformerMixin):
         if self._standardize:
             X_transform = self.preprocess(data=X_transform)
         
-        return pd.DataFrame(X_transform @ self._loadings.T, columns=self._scores.columns, index=data.index)
+        return pd.DataFrame(X_transform @ self._loadings, columns=self._scores.columns, index=data.index)
 
     def fit_transform(self, data, y=None):
         '''
@@ -408,9 +394,9 @@ class PCA(BaseEstimator, TransformerMixin):
         predicted_scores = self.transform(data)
 
         # SPE statistic
-        residuals = X_transform - predicted_scores.values @ self._loadings.values
 
-        SPE = [float(residuals[i, :].T@residuals[i, :]) for i in range(predicted_scores.shape[0])]
+        residuals = X_transform - predicted_scores.values @ self._loadings.values.T
+        SPE = np.sum(np.square(residuals), axis=1)
 
         return SPE, residuals
 
@@ -610,13 +596,13 @@ class PCA(BaseEstimator, TransformerMixin):
         max_pc2 = self._scores[f'PC_{comp2}'].max()
         hypothenuse = (max_pc1**2 + max_pc2**2)**0.5
 
-        max_loadings1 = self._loadings.T[f'PC_{comp1}'].max()
-        max_loadings2 = self._loadings.T[f'PC_{comp2}'].max()
+        max_loadings1 = self._loadings[f'PC_{comp1}'].max()
+        max_loadings2 = self._loadings[f'PC_{comp2}'].max()
         hypothenuse_loadings = (max_loadings1**2 + max_loadings2**2)**0.5
 
         ratio = hypothenuse/hypothenuse_loadings
 
-        loadings = self._loadings.T.copy()*ratio
+        loadings = self._loadings.copy()*ratio
         loadings.index.name = 'variable'
         loadings.reset_index(inplace=True)
 
@@ -667,8 +653,6 @@ class PCA(BaseEstimator, TransformerMixin):
     
         return (scores_plot + loadings_plot+ vline + hline)
     
-    
-    
     def loadings_barplot(self, comp:int):
         '''
         Generates a bar plot of the loadings of the selected component
@@ -688,7 +672,7 @@ class PCA(BaseEstimator, TransformerMixin):
         if not hasattr(self, '_scores'):
             raise ModelNotFittedError()
 
-        loadings = self._loadings.T.copy()
+        loadings = self._loadings.copy()
         loadings.index.name = 'variable'
         loadings.reset_index(inplace=True)
 
