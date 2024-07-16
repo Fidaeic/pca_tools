@@ -13,7 +13,6 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from .exceptions import NotDataFrameError, ModelNotFittedError, NotAListError, NotBoolError, NComponentsError
 from sklearn.base import BaseEstimator, TransformerMixin
-import ray
 import pdb
 from sklearn.decomposition import PCA as PCA_sk
 from .utils import compute_component_wrapper, compute_component
@@ -24,9 +23,7 @@ class PCA(BaseEstimator, TransformerMixin):
                  standardize:bool=True, 
                  tolerance:float=1e-4, 
                  verbose:bool=False,
-                 alpha:float=.99,
-                 ray:bool=False,
-                 ray_workers:int=1) -> None:
+                 alpha:float=.99) -> None:
         
         if not 0 < tolerance < 1:
             raise ValueError('Tolerance must be strictly between 0 and 1')
@@ -47,8 +44,6 @@ class PCA(BaseEstimator, TransformerMixin):
         self._ncomps = n_comps
         self._numerical_features = numerical_features
         self._alpha = alpha
-        self._ray = ray
-        self._ray_workers = ray_workers
         self.model = PCA_sk(n_components=self._ncomps, svd_solver='full', tol=self._tolerance, iterated_power='auto')
 
         self._scaler = Pipeline([

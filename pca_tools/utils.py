@@ -5,7 +5,6 @@ import pandas as pd
 import logging
 import altair as alt
 from .exceptions import NotDataFrameError, NComponentsError, NotAListError, ModelNotFittedError
-import ray
 from numpy import linalg as LA
 import pdb
 from numba import jit
@@ -149,77 +148,3 @@ def hotelling_t2_contribution_plot(pca_model, observation:pd.DataFrame):
     ).properties(
         title=f'Contribution to the Hotelling\'s T2 of observation {str(observation.index.values[0])} - \n T2: {hotelling[0]:.2f} - Comp: {max_comp}'
     ).interactive()
-
-@ray.remote
-def compute_component_ray(X_pca, X, tolerance, t_prev=None, cont=0, verbose=False):
-    X_pca = X_pca.copy()
-    column = np.argmax(np.var(X_pca, axis=0))
-    t_prev = X_pca[:, column].reshape(-1, 1)
-    cont = 0
-
-    while True:
-        # Compute p_t and t
-        p_t = (t_prev.T @ X_pca) / (t_prev.T @ t_prev)
-        p_t /= LA.norm(p_t)
-        t = X_pca @ p_t.T
-
-        # Check convergence
-        conv = np.linalg.norm(t - t_prev)
-        if verbose:
-            print(f"Iteration {cont}, Convergence: {conv}")
-
-        if conv <= tolerance:
-            # Convergence achieved
-            X_pca -= t @ p_t
-            r2 = 1 - np.sum(X_pca**2) / np.sum(X**2)
-            var_t = np.var(t)
-            if verbose:
-                print(f"Component converges after {cont} iterations")
-            return X_pca, t.reshape(X_pca.shape[0]), p_t, var_t, r2
-        else:
-            # Prepare for next iteration
-            t_prev = t
-            cont += 1
-
-def compute_component(X_pca, X, tolerance, t_prev=None, cont=0, verbose=False):
-    X_pca = X_pca.copy()
-    column = np.argmax(np.var(X_pca, axis=0))
-    t_prev = X_pca[:, column].reshape(-1, 1)
-    cont = 0
-
-    while True:
-        # Compute p_t and t
-        p_t = (t_prev.T @ X_pca) / (t_prev.T @ t_prev)
-        p_t /= LA.norm(p_t)
-        t = X_pca @ p_t.T
-
-        # Check convergence
-        conv = np.linalg.norm(t - t_prev)
-        if verbose:
-            print(f"Iteration {cont}, Convergence: {conv}")
-
-        if conv <= tolerance:
-            # Convergence achieved
-            X_pca -= t @ p_t
-            r2 = 1 - np.sum(X_pca**2) / np.sum(X**2)
-            var_t = np.var(t)
-            if verbose:
-                print(f"Component converges after {cont} iterations")
-            return X_pca, t.reshape(X_pca.shape[0]), p_t, var_t, r2
-        else:
-            # Prepare for next iteration
-            t_prev = t
-            cont += 1
-    
-
-def compute_component_wrapper(use_ray, X_pca, X, tolerance, verbose=False, ray_workers=None):
-    if use_ray:
-        # Initialize Ray if not already done
-        if not ray.is_initialized():
-            ray.init(num_cpus=ray_workers, ignore_reinit_error=True)
-        # Call the function with Ray
-        result_id = compute_component_ray.remote(X_pca, X, tolerance, verbose)
-        return ray.get(result_id)
-    else:
-        # Call the function directly
-        return compute_component(X_pca, X, tolerance, verbose)
