@@ -56,8 +56,6 @@ class PCA(BaseEstimator, TransformerMixin):
             "standardize": self._standardize,
             "numerical_features": self._numerical_features,
             "alpha": self._alpha,
-            "ray": self._ray,
-            "ray_workers": self._ray_workers
         })
         return params
     
@@ -174,8 +172,8 @@ class PCA(BaseEstimator, TransformerMixin):
         self._rsquared_acc = np.cumsum(self.model.explained_variance_ratio_)
         self._eigenvals = np.var(self._scores.values, axis=0)
         self._residuals_fit = X - self._scores @ self._loadings.T
-        self._mean_train = np.mean(X, axis=0)
-        self._std_train = np.std(X, axis=0)
+        self._mean_train = np.mean(data.values, axis=0)
+        self._std_train = np.std(data.values, axis=0)
 
     def transform(self, data:pd.DataFrame, y=None):
         '''

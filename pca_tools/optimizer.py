@@ -5,7 +5,7 @@ import pandas as pd
 from .exceptions import NotDataFrameError, NComponentsError, NotAListError
 import logging
 
-def optimize(X, n_comps, alpha, numerical_features, statistic='T2', threshold=3, drop_percentage=0.2, use_ray=False, ray_workers=10):
+def optimize(X, n_comps, alpha, numerical_features, statistic='T2', threshold=3, drop_percentage=0.2):
     """
     This function optimizes a dataset for PCA by iteratively removing out-of-control observations.
 
@@ -60,7 +60,7 @@ def optimize(X, n_comps, alpha, numerical_features, statistic='T2', threshold=3,
     keep_indices = np.arange(X.shape[0])
 
     # Train PCA model
-    pca = PCA(n_comps=n_comps, numerical_features=numerical_features, alpha=alpha, ray=use_ray, ray_workers=ray_workers)
+    pca = PCA(n_comps=n_comps, numerical_features=numerical_features, alpha=alpha)
     pca.fit(X)
 
     # Determine control limit and statistic value based on statistic
