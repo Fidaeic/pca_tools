@@ -13,10 +13,8 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from .exceptions import NotDataFrameError, ModelNotFittedError, NotAListError, NotBoolError, NComponentsError
 from sklearn.base import BaseEstimator, TransformerMixin
-import ray
 import pdb
 from sklearn.decomposition import PCA as PCA_sk
-from .utils import compute_component_wrapper, compute_component
 
 class PCA(BaseEstimator, TransformerMixin):
     def __init__(self, n_comps:int=None, 
@@ -24,9 +22,7 @@ class PCA(BaseEstimator, TransformerMixin):
                  standardize:bool=True, 
                  tolerance:float=1e-4, 
                  verbose:bool=False,
-                 alpha:float=.99,
-                 ray:bool=False,
-                 ray_workers:int=1) -> None:
+                 alpha:float=.99) -> None:
         
         if not 0 < tolerance < 1:
             raise ValueError('Tolerance must be strictly between 0 and 1')
@@ -47,8 +43,6 @@ class PCA(BaseEstimator, TransformerMixin):
         self._ncomps = n_comps
         self._numerical_features = numerical_features
         self._alpha = alpha
-        self._ray = ray
-        self._ray_workers = ray_workers
         self.model = PCA_sk(n_components=self._ncomps, svd_solver='full', tol=self._tolerance, iterated_power='auto')
 
         self._scaler = Pipeline([
@@ -62,8 +56,6 @@ class PCA(BaseEstimator, TransformerMixin):
             "standardize": self._standardize,
             "numerical_features": self._numerical_features,
             "alpha": self._alpha,
-            "ray": self._ray,
-            "ray_workers": self._ray_workers
         })
         return params
     
@@ -180,8 +172,8 @@ class PCA(BaseEstimator, TransformerMixin):
         self._rsquared_acc = np.cumsum(self.model.explained_variance_ratio_)
         self._eigenvals = np.var(self._scores.values, axis=0)
         self._residuals_fit = X - self._scores @ self._loadings.T
-        self._mean_train = np.mean(X, axis=0)
-        self._std_train = np.std(X, axis=0)
+        self._mean_train = np.mean(data.values, axis=0)
+        self._std_train = np.std(data.values, axis=0)
 
     def transform(self, data:pd.DataFrame, y=None):
         '''
@@ -272,17 +264,14 @@ class PCA(BaseEstimator, TransformerMixin):
         if not hasattr(self, '_scores'):
             raise ModelNotFittedError()
 
-        # if isinstance(data, pd.DataFrame):
-        #     data = data.values
-
         if self._standardize==True:
             if self._numerical_features:
-                result = data @ self._loadings
+                result = data @ self._loadings.T
                 result = self._scaler.inverse_transform(result[self._numerical_features])
             else:
-                result = self._scaler.inverse_transform(data @ self._loadings)
+                result = self._scaler.inverse_transform(data @ self._loadings.T)
         else:
-            result = data @ self._loadings
+            result = data @ self._loadings.T
 
         return pd.DataFrame(result, columns=self._variables, index=data.index)
     
