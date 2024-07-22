@@ -142,6 +142,7 @@ def hotelling_t2_contribution_plot(pca_model, observation:pd.DataFrame):
     for i in range(truncated_loadings.shape[1]):  # iterate over principal components
         partial_contributions[:, i] = (truncated_scores[:, i] / truncated_eigenvals[i]) * truncated_loadings[:, i].T * (observation-pca_model._mean_train).values
 
+    partial_contributions = np.where(partial_contributions<0, 0, partial_contributions)
     contributions = partial_contributions.sum(axis=1)
 
     contributions_df = pd.DataFrame({'variable': pca_model._variables, 'contribution': contributions})
