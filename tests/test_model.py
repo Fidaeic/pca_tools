@@ -13,7 +13,7 @@ def test_train(sample_data):
     assert len(pca._eigenvals) == 2, "There should be 2 eigenvalues for 2 components"
     
     assert isinstance(pca._loadings, pd.DataFrame), "Loadings should be a pandas DataFrame"
-    assert pca._loadings.shape == (2, 5), "Loadings shape should match the number of components and features"
+    assert pca._loadings.shape == (5, 2), "Loadings shape should match the number of components and features"
     
     assert isinstance(pca._scores, pd.DataFrame), "Scores should be a pandas DataFrame"
     assert pca._scores.shape[0] == 100, "Scores should have the same number of rows as the input data"

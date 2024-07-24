@@ -277,12 +277,12 @@ class PCA(BaseEstimator, TransformerMixin):
 
         if self._standardize==True:
             if self._numerical_features:
-                result = data @ self._loadings
+                result = data @ self._loadings.T
                 result = self._scaler.inverse_transform(result[self._numerical_features])
             else:
-                result = self._scaler.inverse_transform(data @ self._loadings)
+                result = self._scaler.inverse_transform(data @ self._loadings.T)
         else:
-            result = data @ self._loadings
+            result = data @ self._loadings.T
 
         return pd.DataFrame(result, columns=self._variables, index=data.index)
     
@@ -398,7 +398,7 @@ class PCA(BaseEstimator, TransformerMixin):
         residuals = X_transform - predicted_scores.values @ self._loadings.values.T
         SPE = np.sum(np.square(residuals), axis=1)
 
-        return SPE, residuals
+        return SPE.tolist(), residuals
 
     def project(self, X_predict):
         """

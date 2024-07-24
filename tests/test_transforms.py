@@ -21,7 +21,7 @@ def test_loadings(sample_data):
     pca = PCA(n_comps=3, standardize=True, tolerance=0.00001)
     pca.fit(sample_data)
 
-    assert_frame_equal(np.abs(expected_loadings), np.abs(pca._loadings.T), atol=1e-3)
+    assert_frame_equal(np.abs(expected_loadings), np.abs(pca._loadings), atol=1e-3)
 
 def test_inverse_transform(sample_data):
 
