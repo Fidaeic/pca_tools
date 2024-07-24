@@ -52,11 +52,6 @@ class PCA(BaseEstimator, TransformerMixin):
 
     def get_params(self, deep=True):
         params = super().get_params(deep=deep)
-        params.update({
-            "standardize": self._standardize,
-            "numerical_features": self._numerical_features,
-            "alpha": self._alpha,
-        })
         return params
     
     def set_params(self, **params):

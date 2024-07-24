@@ -5,7 +5,7 @@ with open('README.md', 'r', encoding='utf-8') as fh:
 
 setup(
     name='pca_tools',
-    version='0.2.5',
+    version='0.2.6',
     description='PCA tools for data analysis',
     long_description=long_description,
     long_description_content_type='text/markdown',    
@@ -23,7 +23,6 @@ setup(
         'altair',
         'statsmodels',
         'scipy',
-        'ray'
     ],
     test_suite='tests',  # Path to the test suite
     tests_require=[
