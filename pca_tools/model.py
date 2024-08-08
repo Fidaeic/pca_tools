@@ -420,7 +420,7 @@ class PCA(BaseEstimator, TransformerMixin):
 
         return hotelling_p2, spe_p2, residuals, predicted_scores
     
-    def predict(self, X_predict):
+    def predict(self, X_predict, response_type:str='contributions'):
         '''
         Predicts the probability of an observation being an outlier
 
@@ -428,6 +428,8 @@ class PCA(BaseEstimator, TransformerMixin):
         ----------
         X_predict : array-like, shape (n_samples, n_features)
             The data to be predicted
+        response_type : str
+            The type of response to be returned. It can be either 'contributions' or 'differences'
 
         Returns
         -------
@@ -440,13 +442,15 @@ class PCA(BaseEstimator, TransformerMixin):
         if not hasattr(self, '_scores'):
             raise ModelNotFittedError()
         
+        if response_type not in ['contributions', 'differences']:
+            raise ValueError("Response type must be either 'contributions' or 'differences'")
+        
         hotelling, SPE, _, _ = self.project(X_predict)
 
         X_transform = X_predict.copy()
         if self._standardize:
             X_transform = self.preprocess(data=X_transform)
 
-        dict_differences = {col: X_transform[col].values for col in X_transform.columns}
         # Hotelling's T2 control limit. Phase II
         dfn = self._ncomps
         dfd = self._nobs - self._ncomps
@@ -466,19 +470,88 @@ class PCA(BaseEstimator, TransformerMixin):
 
         ids = [str(idx) for idx in X_predict.index]
 
-        response_json = {
-                    'id': ids,
-                    'hotelling': list(hotelling),
-                    'spe': list(SPE),
-                    'prob_hotelling': list(prob_hotelling),
-                    'prob_spe': list(prob_spe),
-                    'spe_outlier': spe_outlier,
+        # Return the response depending on the response type
+        if response_type == 'contributions':
+            t2_contributions, _ = self.t2_contribution(X_predict)
+            spe_contributions, _ = self.spe_contribution(X_predict)
+            return {'id': ids, 'hotelling': list(hotelling), 
+                    'spe': list(SPE), 
+                    'prob_hotelling': list(prob_hotelling), 
+                    'prob_spe': list(prob_spe), 
+                    'spe_outlier': spe_outlier, 
                     'hotelling_outlier': hotelling_outlier,
-                    'spe_ucl': float(self._spe_limit),
-                    'hotelling_ucl': float(self._hotelling_limit_p2),
-                    'differences': dict_differences
-        }
+                    't2_contributions': t2_contributions.to_dict(orient='records'),
+                    'spe_contributions': spe_contributions.to_dict(orient='records')}
+        
+        elif response_type=='differences':
+            dict_differences = {col: X_transform[col].values for col in X_transform.columns}
+
+            response_json = {
+                        'id': ids,
+                        'hotelling': list(hotelling),
+                        'spe': list(SPE),
+                        'prob_hotelling': list(prob_hotelling),
+                        'prob_spe': list(prob_spe),
+                        'spe_outlier': spe_outlier,
+                        'hotelling_outlier': hotelling_outlier,
+                        'spe_ucl': float(self._spe_limit),
+                        'hotelling_ucl': float(self._hotelling_limit_p2),
+                        'differences': dict_differences
+            }
         return response_json
+    
+    def t2_contribution(self, observation:pd.DataFrame):
+
+        hotelling = self.hotelling_t2(observation)
+        # Get the scores  of the projection of the new observation
+        projected_scores = self.transform(observation)
+
+        # Calculate the normalized scores
+        normalized_scores = projected_scores**2/self._eigenvals
+        normalized_scores /= np.max(normalized_scores)
+
+        #We will consider that high normalized scores are those which are above 0.5
+        high_scores = np.where(normalized_scores>.5)[1]
+
+        # Truncate the loadings, scores and eigenvals to get the contribution of the highest scores
+        truncated_loadings = self._loadings.values[:, high_scores]
+        truncated_scores = projected_scores.values[:, high_scores]
+        truncated_eigenvals = self._eigenvals[high_scores]
+
+        # Calculate the difference from the mean
+        mean_diff = (observation - self._mean_train).values
+
+        # Vectorized calculation of partial contributions
+        partial_contributions = ((truncated_scores / truncated_eigenvals).T * (truncated_loadings.T * mean_diff)).T
+
+        # Set negative contributions to zero
+        partial_contributions = np.maximum(partial_contributions, 0)
+
+        # Sum contributions across components
+        contributions = partial_contributions.sum(axis=1)
+
+        contributions_df = pd.DataFrame({'variable': self._variables, 'contribution': contributions})
+
+        # Keep only the positive contributions. Negative contributions make the score smaller
+        contributions_df = contributions_df[contributions_df['contribution']>0]
+        
+        # Calculate the total sum of contributions
+        total_contribution = contributions_df['contribution'].sum()
+        # Calculate the relative contributions
+        contributions_df['relative_contribution'] = contributions_df['contribution'] / total_contribution
+        return contributions_df, hotelling
+    
+    def spe_contribution(self, observation:pd.DataFrame):
+        SPE, residuals = self.spe(observation)
+
+        contributions_df = pd.DataFrame({'variable': self._variables, 'contribution': residuals[0]**2})
+        # Calculate the total sum of contributions
+        total_contribution = contributions_df['contribution'].sum()
+        # Calculate the relative contributions
+        contributions_df['relative_contribution'] = contributions_df['contribution'] / total_contribution
+
+
+        return contributions_df, SPE
 
 
     '''

@@ -59,9 +59,7 @@ def spe_contribution_plot(pca_model, observation:pd.DataFrame):
     if observation.shape[0] != 1:
         raise ValueError(f'Number of observations in data must be 1')
 
-    SPE, residuals = pca_model.spe(observation)
-
-    contributions_df = pd.DataFrame({'variable': pca_model._variables, 'contribution': residuals[0]**2})
+    contributions_df, SPE = pca_model.t2_contribution(observation)
 
     # Altair plot for the residuals
     return alt.Chart(contributions_df).mark_bar().encode(
@@ -119,36 +117,7 @@ def hotelling_t2_contribution_plot(pca_model, observation:pd.DataFrame):
     if observation.shape[0] != 1:
         raise ValueError(f'Number of observations in data must be 1')
     
-    hotelling = pca_model.hotelling_t2(observation)
-
-    # Get the scores  of the projection of the new observation
-    projected_scores = pca_model.transform(observation)
-
-    # Calculate the normalized scores
-    normalized_scores = projected_scores**2/pca_model._eigenvals
-    normalized_scores /= np.max(normalized_scores)
-
-    #We will consider that high normalized scores are those which are above 0.5
-    high_scores = np.where(normalized_scores>.5)[1]
-
-    # Truncate the loadings, scores and eigenvals to get the contribution of the highest scores
-    truncated_loadings = pca_model._loadings.values[:, high_scores]
-    truncated_scores = projected_scores.values[:, high_scores]
-    truncated_eigenvals = pca_model._eigenvals[high_scores]
-
-    # For each component that has a score above 0.5, we calculate the contribution of each variable to that component
-    partial_contributions = np.zeros_like(truncated_loadings)
-
-    for i in range(truncated_loadings.shape[1]):  # iterate over principal components
-        partial_contributions[:, i] = (truncated_scores[:, i] / truncated_eigenvals[i]) * truncated_loadings[:, i].T * (observation-pca_model._mean_train).values
-
-    partial_contributions = np.where(partial_contributions<0, 0, partial_contributions)
-    contributions = partial_contributions.sum(axis=1)
-
-    contributions_df = pd.DataFrame({'variable': pca_model._variables, 'contribution': contributions})
-
-    # Keep only the positive contributions. Negative contributions make the score smaller
-    contributions_df = contributions_df[contributions_df['contribution']>0]
+    contributions_df, hotelling = pca_model.t2_contribution(observation)
 
     # Altair plot for the residuals
     return alt.Chart(contributions_df).mark_bar().encode(
