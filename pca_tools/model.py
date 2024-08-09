@@ -420,7 +420,7 @@ class PCA(BaseEstimator, TransformerMixin):
 
         return hotelling_p2, spe_p2, residuals, predicted_scores
     
-    def predict(self, X_predict, response_type:str='contributions'):
+    def predict(self, X_predict):
         '''
         Predicts the probability of an observation being an outlier
 
@@ -428,9 +428,6 @@ class PCA(BaseEstimator, TransformerMixin):
         ----------
         X_predict : array-like, shape (n_samples, n_features)
             The data to be predicted
-        response_type : str
-            The type of response to be returned. It can be either 'contributions' or 'differences'
-
         Returns
         -------
         response : dict
@@ -441,10 +438,7 @@ class PCA(BaseEstimator, TransformerMixin):
 
         if not hasattr(self, '_scores'):
             raise ModelNotFittedError()
-        
-        if response_type not in ['contributions', 'differences']:
-            raise ValueError("Response type must be either 'contributions' or 'differences'")
-        
+
         hotelling, SPE, _, _ = self.project(X_predict)
 
         X_transform = X_predict.copy()
@@ -470,35 +464,21 @@ class PCA(BaseEstimator, TransformerMixin):
 
         ids = [str(idx) for idx in X_predict.index]
 
-        # Return the response depending on the response type
-        if response_type == 'contributions':
-            t2_contributions, _ = self.t2_contribution(X_predict)
-            spe_contributions, _ = self.spe_contribution(X_predict)
-            return {'id': ids, 'hotelling': list(hotelling), 
+        t2_contributions, _ = self.t2_contribution(X_predict)
+        spe_contributions, _ = self.spe_contribution(X_predict)
+        dict_differences = {col: X_transform[col].values for col in X_transform.columns}
+
+        return {'id': ids, 
+                    'hotelling': list(hotelling), 
                     'spe': list(SPE), 
                     'prob_hotelling': list(prob_hotelling), 
                     'prob_spe': list(prob_spe), 
                     'spe_outlier': spe_outlier, 
                     'hotelling_outlier': hotelling_outlier,
                     't2_contributions': t2_contributions.to_dict(orient='records'),
-                    'spe_contributions': spe_contributions.to_dict(orient='records')}
-        
-        elif response_type=='differences':
-            dict_differences = {col: X_transform[col].values for col in X_transform.columns}
-
-            response_json = {
-                        'id': ids,
-                        'hotelling': list(hotelling),
-                        'spe': list(SPE),
-                        'prob_hotelling': list(prob_hotelling),
-                        'prob_spe': list(prob_spe),
-                        'spe_outlier': spe_outlier,
-                        'hotelling_outlier': hotelling_outlier,
-                        'spe_ucl': float(self._spe_limit),
-                        'hotelling_ucl': float(self._hotelling_limit_p2),
-                        'differences': dict_differences
-            }
-        return response_json
+                    'spe_contributions': spe_contributions.to_dict(orient='records'),
+                    'differences': dict_differences
+                    }
     
     def t2_contribution(self, observation:pd.DataFrame):
 
