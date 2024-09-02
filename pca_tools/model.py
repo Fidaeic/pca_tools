@@ -15,6 +15,7 @@ from .exceptions import NotDataFrameError, ModelNotFittedError, NotAListError, N
 from sklearn.base import BaseEstimator, TransformerMixin
 import pdb
 from sklearn.decomposition import PCA as PCA_sk
+from .functions import contribution_status
 
 class PCA(BaseEstimator, TransformerMixin):
     def __init__(self, n_comps:int=None, 
@@ -78,7 +79,7 @@ class PCA(BaseEstimator, TransformerMixin):
         self._spe, _ = self.spe(data)
         self._hotelling = self.hotelling_t2(data)
 
-        self.control_limits(alpha=self._alpha)
+        self._hotelling_limit_p1, self._hotelling_limit_p2, self._spe_limit = self.control_limits(alpha=self._alpha)
 
     def preprocess(self, data):
         """
@@ -303,14 +304,14 @@ class PCA(BaseEstimator, TransformerMixin):
         dfd = (self._nobs-self._ncomps-1)/2
         const = ((self._nobs-1)**2)/self._nobs
 
-        self._hotelling_limit_p1 = beta.ppf(alpha, dfn, dfd)*const
+        hotelling_limit_p1 = beta.ppf(alpha, dfn, dfd)*const
 
         # Hotelling's T2 control limit. Phase II
         const = (self._ncomps * (self._nobs**2 -1)) / (self._nobs * (self._nobs - self._ncomps))
         dfn = self._ncomps
         dfd = self._nobs - self._ncomps
 
-        self._hotelling_limit_p2 = f.ppf(alpha, dfn, dfd)*const
+        hotelling_limit_p2 = f.ppf(alpha, dfn, dfd)*const
 
         # SPE control limit
         b, nu = np.mean(self._spe), np.var(self._spe)
@@ -318,7 +319,9 @@ class PCA(BaseEstimator, TransformerMixin):
         df = (2*b**2)/nu
         const = nu/(2*b)
 
-        self._spe_limit = chi2.ppf(alpha, df)*const
+        spe_limit = chi2.ppf(alpha, df)*const
+
+        return hotelling_limit_p1, hotelling_limit_p2, spe_limit
     
     def hotelling_t2(self, data):
         '''
@@ -441,44 +444,37 @@ class PCA(BaseEstimator, TransformerMixin):
 
         hotelling, SPE, _, _ = self.project(X_predict)
 
+        _, hotelling_95, _ = self.control_limits(alpha=.95)
+        _, hotelling_99, _ = self.control_limits(alpha=.99)
+
+        if hotelling >= hotelling_99:
+            status = 'red'
+        elif hotelling >= hotelling_95:
+            status = 'yellow'
+        else:
+            status = 'green'
+
         X_transform = X_predict.copy()
         if self._standardize:
             X_transform = self.preprocess(data=X_transform)
 
-        # Hotelling's T2 control limit. Phase II
-        dfn = self._ncomps
-        dfd = self._nobs - self._ncomps
-        const = (self._ncomps * (self._nobs**2 -1)) / (self._nobs * (self._nobs - self._ncomps))
-        prob_hotelling = [float(1-f.cdf(np.array(value)/const, dfn, dfd)) for value in hotelling]
-        
-        # SPE control limit. Phase II
-        b, nu = np.mean(self._spe), np.var(self._spe)
-            
-        df = (2*b**2)/nu
-        const = nu/(2*b)
-
-        prob_spe = [float(1-chi2.cdf(np.array(spe)/const, df)) for spe in SPE]
-
-        spe_outlier = [bool(x) for x in (SPE >= self._spe_limit)]
-        hotelling_outlier = [bool(x) for x in (hotelling >= self._hotelling_limit_p2)]
-
-        ids = [str(idx) for idx in X_predict.index]
-
         t2_contributions, _ = self.t2_contribution(X_predict)
-        spe_contributions, _ = self.spe_contribution(X_predict)
-        dict_differences = {col: X_transform[col].values for col in X_transform.columns}
 
-        return {'id': ids, 
-                    'hotelling': list(hotelling), 
-                    'spe': list(SPE), 
-                    'prob_hotelling': list(prob_hotelling), 
-                    'prob_spe': list(prob_spe), 
-                    'spe_outlier': spe_outlier, 
-                    'hotelling_outlier': hotelling_outlier,
-                    't2_contributions': t2_contributions.to_dict(orient='records'),
-                    'spe_contributions': spe_contributions.to_dict(orient='records'),
-                    'differences': dict_differences
-                    }
+        t2_contributions['status'] = t2_contributions.apply(contribution_status, axis=1)
+
+        result_dict = {
+            row['variable']: {
+                'contribution': row['relative_contribution'],
+                'status': row['status']
+            }
+            for _, row in t2_contributions.iterrows()
+        }
+            
+        return {'0days':
+                {'anomaly_level': hotelling,
+                "control_limit": self._hotelling_limit_p2,
+                'status': status,
+                'components':result_dict}}
     
     def t2_contribution(self, observation:pd.DataFrame):
 
