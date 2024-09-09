@@ -49,17 +49,14 @@ def spe_contribution_plot(pca_model, observation:pd.DataFrame):
 
     if not hasattr(pca_model, '_scores'):
         raise ModelNotFittedError()
-
-    if not isinstance(observation, pd.DataFrame):
-        raise NotDataFrameError(type(observation).__name__)
-    
+   
     if observation.shape[1] != len(pca_model._variables):
         raise ValueError(f'Number of features in data must be {len(pca_model._variables)}')
     
     if observation.shape[0] != 1:
         raise ValueError(f'Number of observations in data must be 1')
 
-    contributions_df, SPE = pca_model.t2_contribution(observation)
+    contributions_df, SPE = pca_model.spe_contribution(observation)
 
     # Altair plot for the residuals
     return alt.Chart(contributions_df).mark_bar().encode(
@@ -107,9 +104,6 @@ def hotelling_t2_contribution_plot(pca_model, observation:pd.DataFrame):
     '''
     if not hasattr(pca_model, '_scores'):
         raise ModelNotFittedError()
-
-    if not isinstance(observation, pd.DataFrame):
-        raise NotDataFrameError(type(observation).__name__)
     
     if observation.shape[1] != len(pca_model._variables):
         raise ValueError(f'Number of features in data must be {len(pca_model._variables)}')
