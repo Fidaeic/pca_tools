@@ -447,9 +447,11 @@ class PCA(BaseEstimator, TransformerMixin):
         _, hotelling_95, _ = self.control_limits(alpha=.95)
         _, hotelling_99, _ = self.control_limits(alpha=.99)
 
-        if hotelling >= hotelling_99:
+        # print(hotelling, hotelling_95, hotelling_99)
+
+        if np.any(hotelling >= hotelling_99):
             status = 'red'
-        elif hotelling >= hotelling_95:
+        elif np.any(hotelling >= hotelling_95):
             status = 'yellow'
         else:
             status = 'green'
@@ -461,6 +463,7 @@ class PCA(BaseEstimator, TransformerMixin):
         t2_contributions, _ = self.t2_contribution(X_predict)
 
         t2_contributions['status'] = t2_contributions.apply(contribution_status, axis=1)
+        t2_contributions = t2_contributions.sort_values(by='contribution', ascending=False).iloc[:30]
 
         result_dict = {
             row['variable']: {
@@ -471,8 +474,10 @@ class PCA(BaseEstimator, TransformerMixin):
         }
             
         return {'0days':
-                {'anomaly_level': hotelling,
-                "control_limit": self._hotelling_limit_p2,
+                {'anomaly_level_hotelling': hotelling,
+                 'control_limit_hotelling': self._hotelling_limit_p2,
+                 'anomaly_level_spe': SPE,
+                'control_limit_spe': self._spe_limit,
                 'status': status,
                 'components':result_dict}}
     
@@ -498,7 +503,7 @@ class PCA(BaseEstimator, TransformerMixin):
         mean_diff = (observation - self._mean_train).values
 
         # Vectorized calculation of partial contributions
-        partial_contributions = ((truncated_scores / truncated_eigenvals).T * (truncated_loadings.T * mean_diff)).T
+        partial_contributions = ((truncated_scores / truncated_eigenvals).T @ (truncated_loadings.T * mean_diff)).T
 
         # Set negative contributions to zero
         partial_contributions = np.maximum(partial_contributions, 0)

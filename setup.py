@@ -5,7 +5,7 @@ with open('README.md', 'r', encoding='utf-8') as fh:
 
 setup(
     name='pca_tools',
-    version='0.2.9',
+    version='0.2.10',
     description='PCA tools for data analysis',
     long_description=long_description,
     long_description_content_type='text/markdown',    

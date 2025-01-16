@@ -36,5 +36,5 @@ def test_anomalies(sample_data):
     predictions = pca_model.predict(sample_data)
 
     # Verification
-    assert predictions['spe_outlier'][anomalous_observation] == True, "Anomaly not detected"
-    assert predictions['hotelling_outlier'][anomalous_observation] == True, "Anomaly not detected"
+    assert predictions['0days']['anomaly_level_hotelling'][anomalous_observation] > predictions['0days']['control_limit_hotelling'], "Anomaly detected"
+    assert predictions['0days']['anomaly_level_spe'][anomalous_observation] > predictions['0days']['control_limit_spe'], "Anomaly detected"
