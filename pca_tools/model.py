@@ -484,6 +484,7 @@ class PCA(BaseEstimator, TransformerMixin):
     def t2_contribution(self, observation:pd.DataFrame):
 
         hotelling = self.hotelling_t2(observation)
+
         # Get the scores  of the projection of the new observation
         projected_scores = self.transform(observation)
 
@@ -503,13 +504,13 @@ class PCA(BaseEstimator, TransformerMixin):
         mean_diff = (observation - self._mean_train).values
 
         # Vectorized calculation of partial contributions
-        partial_contributions = ((truncated_scores / truncated_eigenvals).T @ (truncated_loadings.T * mean_diff)).T
+        partial_contributions = ((truncated_scores / truncated_eigenvals) @ truncated_loadings.T) * mean_diff
 
         # Set negative contributions to zero
         partial_contributions = np.maximum(partial_contributions, 0)
 
         # Sum contributions across components
-        contributions = partial_contributions.sum(axis=1)
+        contributions = partial_contributions.sum(axis=0)
 
         contributions_df = pd.DataFrame({'variable': self._variables, 'contribution': contributions})
 
