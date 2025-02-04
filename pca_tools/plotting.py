@@ -397,13 +397,38 @@ def spe_plot_p2(spe: pd.DataFrame, alpha: float, spe_limit: float) -> alt.LayerC
     # Altair plot for the SPE statistic
     return (spe_chart + threshold)
 
-def residuals_plot(residuals: pd.DataFrame, SPE: np.ndarray, data:pd.DataFrame) -> alt.Chart:
+def residuals_barplot(residuals: pd.DataFrame, SPE: np.ndarray, data: pd.DataFrame) -> alt.Chart:
+    """
+    Generates an interactive bar plot visualizing the residuals for a specific observation within the dataset.
 
+    This function creates a bar plot to display the residuals (differences between observed and predicted values) for a single observation in the dataset. 
+    It is designed to help in diagnosing and understanding the prediction errors for individual observations. 
+    The plot includes a title indicating the observation index and its Squared Prediction Error (SPE) value.
+
+    Parameters
+    ----------
+    residuals : pd.DataFrame
+        DataFrame containing the residuals for each variable. It should have columns 'variable' and 'residual'.
+    SPE : np.ndarray
+        Array containing the SPE statistic for the observation.
+    data : pd.DataFrame
+        The original data for the observation. It is used to extract the observation index for the plot title.
+
+    Returns
+    -------
+    alt.Chart
+        An Altair Chart object representing the bar plot of the residuals.
+
+    Notes
+    -----
+    - The plot is interactive, allowing for tooltips to display the variable names and residual values when hovering over the bars.
+    - The title of the plot includes the observation index and its SPE value for reference.
+    """
     # Altair plot for the residuals
-        return alt.Chart(residuals).mark_bar().encode(
-            x=alt.X('variable', title='Variable'),
-            y=alt.Y('residual', title='Residual'),
-            tooltip=['variable', 'residual']
-        ).properties(
-            title=f'Residuals for observation {str(data.index.values[0])} - SPE: {SPE[0]:.2f}'
-        ).interactive()
+    return alt.Chart(residuals).mark_bar().encode(
+        x=alt.X('variable', title='Variable'),
+        y=alt.Y('residual', title='Residual'),
+        tooltip=['variable', 'residual']
+    ).properties(
+        title=f'Residuals for observation {str(data.index.values[0])} - SPE: {SPE[0]:.2f}'
+    ).interactive()

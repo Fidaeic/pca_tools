@@ -15,7 +15,7 @@ from .exceptions import NotDataFrameError, ModelNotFittedError, NotAListError, N
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.decomposition import PCA as PCA_sk
 from .functions import contribution_status
-from .plotting import score_plot, biplot, loadings_barplot, hotelling_t2_plot_p1, hotelling_t2_plot_p2, spe_plot_p1, spe_plot_p2, residuals_plot
+from .plotting import score_plot, biplot, loadings_barplot, hotelling_t2_plot_p1, hotelling_t2_plot_p2, spe_plot_p1, spe_plot_p2, residuals_barplot
 
 class PCA(BaseEstimator, TransformerMixin):
     def __init__(self, n_comps:int=None, 
@@ -62,6 +62,17 @@ class PCA(BaseEstimator, TransformerMixin):
     
     def get_rsquared_acc(self):
         return self._rsquared_acc
+    
+    def is_fitted(self) -> bool:
+        """
+        Checks if the PCA model has been fitted.
+        
+        Returns
+        -------
+        bool
+            True if the model has been fitted (i.e., the _scores attribute is present); False otherwise.
+        """
+        return hasattr(self, '_scores')
 
     def fit(self, data, y=None):
 
@@ -257,7 +268,7 @@ class PCA(BaseEstimator, TransformerMixin):
         - This operation is the inverse of the PCA transformation, but it may not perfectly reconstruct the original data if the PCA transformation was lossy (i.e., if some components were discarded).
         '''
 
-        if not hasattr(self, '_scores'):
+        if not self.is_fitted():
             raise ModelNotFittedError()
 
         if self._standardize==True:
@@ -297,7 +308,7 @@ class PCA(BaseEstimator, TransformerMixin):
         - The SPE statistic measures the squared prediction error of each observation from the PCA model. It is used to detect observations that do not conform to the model.
         - The control limits are based on the F-distribution for Hotelling's T2 and the chi-squared distribution for SPE, adjusted for the sample size and the number of principal components in the model.
         '''
-        if not hasattr(self, '_scores'):
+        if not self.is_fitted():
             raise ModelNotFittedError()
         # Hotelling's T2 control limit. Phase I
         dfn = self._ncomps/2
@@ -340,7 +351,7 @@ class PCA(BaseEstimator, TransformerMixin):
         -------
         Hotelling's T2 statistic for every observation.
         '''
-        if not hasattr(self, '_scores'):
+        if not self.is_fitted():
             raise ModelNotFittedError()
         
         if not isinstance(data, pd.DataFrame):
@@ -367,7 +378,7 @@ class PCA(BaseEstimator, TransformerMixin):
 
         '''
 
-        if not hasattr(self, '_scores'):
+        if not self.is_fitted():
             raise ModelNotFittedError()
         
         X_transform = data.copy()
@@ -412,7 +423,7 @@ class PCA(BaseEstimator, TransformerMixin):
         if not isinstance(X_predict, pd.DataFrame):
             raise NotDataFrameError(type(X_predict).__name__)
 
-        if not hasattr(self, '_scores'):
+        if not self.is_fitted():
             raise ModelNotFittedError()
         
         hotelling_p2 = self.hotelling_t2(X_predict)
@@ -439,7 +450,7 @@ class PCA(BaseEstimator, TransformerMixin):
         if not isinstance(X_predict, pd.DataFrame):
             raise NotDataFrameError(type(X_predict).__name__)
 
-        if not hasattr(self, '_scores'):
+        if not self.is_fitted():
             raise ModelNotFittedError()
 
         hotelling, SPE, _, _ = self.project(X_predict)
@@ -848,7 +859,6 @@ class PCA(BaseEstimator, TransformerMixin):
         
         SPE, residuals = self.spe(data)
         
-
         residuals = pd.DataFrame({'variable': self._variables, 'residual': residuals[0]})
         # Altair plot for the residuals
-        return residuals_plot(residuals, SPE, data)
+        return residuals_barplot(residuals, SPE, data)
