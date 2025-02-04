@@ -100,9 +100,6 @@ def biplot(scores:pd.DataFrame,
     -------
     None
     '''
-
-    scores = scores.copy()
-
     # Create a copy of the scores DataFrame to avoid modifying the original data
     scores = scores.copy()
 
@@ -163,7 +160,7 @@ def biplot(scores:pd.DataFrame,
 
     if test_set is not None:
 
-        scores_test = scores_test.reset_index()
+        scores_test = test_set.reset_index()
         scatter_test = alt.Chart(scores_test).mark_point(color='black', opacity=.1).encode(
             x=f"PC_{comp1}",
             y=f"PC_{comp2}",
@@ -431,4 +428,34 @@ def residuals_barplot(residuals: pd.DataFrame, SPE: np.ndarray, data: pd.DataFra
         tooltip=['variable', 'residual']
     ).properties(
         title=f'Residuals for observation {str(data.index.values[0])} - SPE: {SPE[0]:.2f}'
+    ).interactive()
+
+def difference_plot(df_plot: pd.DataFrame) -> alt.Chart:
+    """
+    Generates an interactive bar plot visualizing the difference between a specific observation and the mean of the sample.
+
+    This function creates a bar plot to visually compare the values of a given observation against the mean values of the training sample. 
+    It is particularly useful for understanding how an individual observation deviates from the average trend across each variable. 
+    The plot includes tooltips for detailed residual values and is titled with the observation's index and its SPE value, providing immediate insight into the model's performance on that observation.
+
+    Parameters
+    ----------
+    df_plot : pd.DataFrame
+        DataFrame containing the variables and their corresponding values for the observation. 
+        It should have columns 'variable' and 'value'.
+
+    Returns
+    -------
+    alt.Chart
+        An interactive Altair Chart object representing the bar plot. This plot includes tooltips and is titled with the observation's index and SPE value.
+
+    Notes
+    -----
+    - The plot is interactive, allowing for tooltips to display the variable names and values when hovering over the bars.
+    - The title of the plot includes the observation index and its SPE value for reference.
+    """
+    return alt.Chart(df_plot).mark_bar().encode(
+        x=alt.X('variable', title='Variable'),
+        y=alt.Y('value', title='Difference with respect to the mean (std)'),
+        tooltip=['variable', 'value']
     ).interactive()

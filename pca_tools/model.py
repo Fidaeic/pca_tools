@@ -16,6 +16,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.decomposition import PCA as PCA_sk
 from .functions import contribution_status
 from .plotting import score_plot, biplot, loadings_barplot, hotelling_t2_plot_p1, hotelling_t2_plot_p2, spe_plot_p1, spe_plot_p2, residuals_barplot
+from .utils import validate_dataframe, require_fitted, cache_result
 
 class PCA(BaseEstimator, TransformerMixin):
     def __init__(self, n_comps:int=None, 
@@ -74,10 +75,8 @@ class PCA(BaseEstimator, TransformerMixin):
         """
         return hasattr(self, '_scores')
 
+    @validate_dataframe('data')
     def fit(self, data, y=None):
-
-        if not isinstance(data, pd.DataFrame):
-            raise NotDataFrameError(type(data).__name__)
 
         if self._standardize:
             if not self._numerical_features:
@@ -92,6 +91,7 @@ class PCA(BaseEstimator, TransformerMixin):
 
         self._hotelling_limit_p1, self._hotelling_limit_p2, self._spe_limit = self.control_limits(alpha=self._alpha)
 
+    @validate_dataframe('data')
     def preprocess(self, data):
         """
         Preprocesses the input data using the scaler attribute of the class.
@@ -119,7 +119,8 @@ class PCA(BaseEstimator, TransformerMixin):
             X_transform = pd.DataFrame(self._scaler.transform(X_transform), columns=columns, index=index)
 
         return X_transform
-            
+    
+    @validate_dataframe('data')
     def train(self, data:pd.DataFrame):
         '''
         Trains the PCA model using the provided dataset.
@@ -157,9 +158,6 @@ class PCA(BaseEstimator, TransformerMixin):
         if self._ncomps <= 0 or self._ncomps > data.shape[1]:
             raise NComponentsError(data.shape[1])
 
-        if not isinstance(data, pd.DataFrame):
-            raise NotDataFrameError(type(data).__name__)
-
         self._variables = data.columns
         self._index = data.index
         self._index_name = data.index.name
@@ -182,6 +180,8 @@ class PCA(BaseEstimator, TransformerMixin):
         self._mean_train = np.mean(data.values, axis=0)
         self._std_train = np.std(data.values, axis=0)
 
+    @validate_dataframe('data')
+    @require_fitted
     def transform(self, data:pd.DataFrame, y=None):
         '''
         Transforms the input data by projecting it onto the PCA space defined by the model.
@@ -210,10 +210,6 @@ class PCA(BaseEstimator, TransformerMixin):
         - The transformation process involves centering and scaling the data (if standardization was applied during fitting) before projecting it onto the PCA space using the loadings matrix derived during fitting.
         - The returned DataFrame retains the original index of the input `data`, facilitating easy tracking of samples.
         '''
-
-        if not isinstance(data, pd.DataFrame):
-            raise NotDataFrameError(type(data).__name__)
-
         X_transform = data.copy()
         # Descale and demean matrix
         if self._standardize:
@@ -221,6 +217,7 @@ class PCA(BaseEstimator, TransformerMixin):
         
         return pd.DataFrame(X_transform @ self._loadings, columns=self._scores.columns, index=data.index)
 
+    @validate_dataframe('data')
     def fit_transform(self, data, y=None):
         '''
         Fits the PCA model to the data and then transforms the data by projecting it onto the PCA space.
@@ -247,6 +244,8 @@ class PCA(BaseEstimator, TransformerMixin):
         self.train(data)
         return self.transform(data)
 
+    @require_fitted
+    @validate_dataframe('data')
     def inverse_transform(self, data):
         '''
         Reconstructs the original dataset from its PCA-transformed version.
@@ -267,10 +266,6 @@ class PCA(BaseEstimator, TransformerMixin):
         -----
         - This operation is the inverse of the PCA transformation, but it may not perfectly reconstruct the original data if the PCA transformation was lossy (i.e., if some components were discarded).
         '''
-
-        if not self.is_fitted():
-            raise ModelNotFittedError()
-
         if self._standardize==True:
             if self._numerical_features:
                 result = data @ self._loadings.T
@@ -282,6 +277,8 @@ class PCA(BaseEstimator, TransformerMixin):
 
         return pd.DataFrame(result, columns=self._variables, index=data.index)
     
+    @cache_result
+    @require_fitted
     def control_limits(self, alpha:float=0.95):
         '''
         Calculates the control limits for Hotelling's T2 and SPE (Squared Prediction Error) statistics.
@@ -308,8 +305,6 @@ class PCA(BaseEstimator, TransformerMixin):
         - The SPE statistic measures the squared prediction error of each observation from the PCA model. It is used to detect observations that do not conform to the model.
         - The control limits are based on the F-distribution for Hotelling's T2 and the chi-squared distribution for SPE, adjusted for the sample size and the number of principal components in the model.
         '''
-        if not self.is_fitted():
-            raise ModelNotFittedError()
         # Hotelling's T2 control limit. Phase I
         dfn = self._ncomps/2
         dfd = (self._nobs-self._ncomps-1)/2
@@ -334,6 +329,8 @@ class PCA(BaseEstimator, TransformerMixin):
 
         return hotelling_limit_p1, hotelling_limit_p2, spe_limit
     
+    @validate_dataframe('data')
+    @require_fitted
     def hotelling_t2(self, data):
         '''
         Hotelling's T2 represents the estimated squared Mahalanobis distance from the center of the latent subspace
@@ -351,16 +348,12 @@ class PCA(BaseEstimator, TransformerMixin):
         -------
         Hotelling's T2 statistic for every observation.
         '''
-        if not self.is_fitted():
-            raise ModelNotFittedError()
-        
-        if not isinstance(data, pd.DataFrame):
-            raise NotDataFrameError(type(data).__name__)
-
         predicted_scores = self.transform(data)
 
         return list(np.sum((predicted_scores.values**2) / self._eigenvals, axis=1))
-        
+    
+    @validate_dataframe('data')
+    @require_fitted
     def spe(self, data):
         '''
         Represents the sum of squared prediction errors. The value is given by the expression 
@@ -376,11 +369,7 @@ class PCA(BaseEstimator, TransformerMixin):
         -------
         SPE statistic for every observation.
 
-        '''
-
-        if not self.is_fitted():
-            raise ModelNotFittedError()
-        
+        '''       
         X_transform = data.copy()
 
         # Descale and demean matrix
@@ -398,6 +387,8 @@ class PCA(BaseEstimator, TransformerMixin):
 
         return SPE.tolist(), residuals
 
+    @validate_dataframe('data')
+    @require_fitted
     def project(self, X_predict):
         """
         Projects new data onto the fitted PCA model and calculates Hotelling's T2 and SPE statistics.
@@ -420,11 +411,6 @@ class PCA(BaseEstimator, TransformerMixin):
         data and its reconstruction from the principal components.
         - predicted_scores (pd.DataFrame): The scores of the projected data on the principal components.
         """
-        if not isinstance(X_predict, pd.DataFrame):
-            raise NotDataFrameError(type(X_predict).__name__)
-
-        if not self.is_fitted():
-            raise ModelNotFittedError()
         
         hotelling_p2 = self.hotelling_t2(X_predict)
         
@@ -434,6 +420,8 @@ class PCA(BaseEstimator, TransformerMixin):
 
         return hotelling_p2, spe_p2, residuals, predicted_scores
     
+    @validate_dataframe('X_predict')
+    @require_fitted
     def predict(self, X_predict):
         '''
         Predicts the probability of an observation being an outlier
@@ -447,18 +435,10 @@ class PCA(BaseEstimator, TransformerMixin):
         response : dict
             Dictionary containing the prediction of the model given an observation. It contains attributes such as the T2 and SPE limits and values, as well as the probability of the observation being an outlier
         '''
-        if not isinstance(X_predict, pd.DataFrame):
-            raise NotDataFrameError(type(X_predict).__name__)
-
-        if not self.is_fitted():
-            raise ModelNotFittedError()
-
         hotelling, SPE, _, _ = self.project(X_predict)
 
         _, hotelling_95, _ = self.control_limits(alpha=.95)
         _, hotelling_99, _ = self.control_limits(alpha=.99)
-
-        # print(hotelling, hotelling_95, hotelling_99)
 
         if np.any(hotelling >= hotelling_99):
             status = 'red'
@@ -492,6 +472,7 @@ class PCA(BaseEstimator, TransformerMixin):
                 'status': status,
                 'components':result_dict}}
     
+    @validate_dataframe('observation')
     def t2_contribution(self, observation:pd.DataFrame):
 
         hotelling = self.hotelling_t2(observation)
@@ -550,6 +531,7 @@ class PCA(BaseEstimator, TransformerMixin):
     '''
     PLOTS
     '''
+    @require_fitted
     def score_plot(self, comp1:int, comp2:int, hue:pd.Series=None, test_set:pd.DataFrame=None):
         '''
         Generates a score plot of the selected components
@@ -574,15 +556,13 @@ class PCA(BaseEstimator, TransformerMixin):
         if comp1 <= 0 or comp1>self._nvars or comp2 <= 0 or comp2>self._nvars:
             raise NComponentsError(self._nvars)
         
-        if not hasattr(self, '_scores'):
-            raise ModelNotFittedError()
-        
         if test_set is not None:
 
             test_set = self.transform(test_set)
 
         return score_plot(scores=self._scores, comp1=comp1, comp2=comp2, explained_variance=self._explained_variance, hue=hue, index_name=self._index_name, test_set=test_set)
     
+    @require_fitted
     def biplot(self, comp1:int, comp2:int, hue:pd.Series=None, test_set:pd.DataFrame=None):
         '''
         Generates a scatter plot of the selected components with the scores and the loadings
@@ -605,15 +585,13 @@ class PCA(BaseEstimator, TransformerMixin):
         if comp1 <= 0 or comp1>self._ncomps or comp2 <= 0 or comp2>self._ncomps:
             raise NComponentsError(self._nvars)
         
-        if not hasattr(self, '_scores'):
-            raise ModelNotFittedError()
-
         if test_set is not None:
 
             test_set = self.transform(test_set)
     
         return biplot(scores=self._scores, loadings=self._loadings, comp1=comp1, comp2=comp2, explained_variance=self._explained_variance, hue=hue, index_name=self._index_name, test_set=test_set)
     
+    @require_fitted
     def loadings_barplot(self, comp:int):
         '''
         Generates a bar plot of the loadings of the selected component
@@ -629,15 +607,14 @@ class PCA(BaseEstimator, TransformerMixin):
         '''
         if comp <= 0 or comp>self._ncomps:
             raise NComponentsError(self._nvars)
-        
-        if not hasattr(self, '_scores'):
-            raise ModelNotFittedError()
 
         # Altair plot for the loadings
         return loadings_barplot(self._loadings, self._explained_variance, comp)
 
+    @require_fitted
+    @validate_dataframe('X_obs')
     def difference_plot(self, 
-                        X_obs:pd.Series,):   
+                        X_obs:pd.DataFrame):   
         '''
         Generates a bar plot visualizing the difference between a specific observation and the mean of the sample.
 
@@ -659,13 +636,7 @@ class PCA(BaseEstimator, TransformerMixin):
             If `X_obs` is not a pandas DataFrame.
         ValueError
             If `X_obs` does not contain the same variables as the training data.
-        '''
-        if not isinstance(X_obs, pd.DataFrame):
-            raise NotDataFrameError(type(X_obs).__name__)
-        
-        if not hasattr(self, '_scores'):
-            raise ModelNotFittedError()
-        
+        '''       
         if sorted(X_obs.columns) != sorted(self._variables):
             raise ValueError("The observation must have the same variables as the training data")
             
@@ -681,6 +652,7 @@ class PCA(BaseEstimator, TransformerMixin):
             tooltip=['variable', 'value']
         ).interactive()
 
+    @require_fitted
     def hotelling_t2_plot_p1(self):
         '''
         Generates an interactive plot visualizing the Hotelling's T2 statistic over observations.
@@ -699,11 +671,10 @@ class PCA(BaseEstimator, TransformerMixin):
         - The method assumes that the Hotelling's T2 statistics (`self._hotelling`) and the threshold (`self._hotelling_limit_p1`) have been previously calculated and are stored as attributes of the class.
         - The plot is interactive, allowing for zooming and panning to explore the data points in detail.
         '''
-        if not hasattr(self, '_scores'):
-            raise ModelNotFittedError()
-
         return hotelling_t2_plot_p1(self._hotelling, self._alpha, self._hotelling_limit_p1)
     
+    @require_fitted
+    @validate_dataframe('test_set')
     def hotelling_t2_plot_p2(self, test_set:pd.DataFrame):
         '''
         Generates an interactive plot of the Hotelling's T2 statistic for Phase II observations.
@@ -732,16 +703,11 @@ class PCA(BaseEstimator, TransformerMixin):
         - The method assumes the PCA model has been fitted and the threshold (`self._hotelling_limit_p2`) has been set.
         - The plot's title includes the significance level (alpha) and the threshold value, providing context for the analysis.
         '''
-        if not hasattr(self, '_scores'):
-            raise ModelNotFittedError()
-
-        if not isinstance(test_set, pd.DataFrame):
-            raise NotDataFrameError(type(test_set).__name__)
-
         hotelling = self.hotelling_t2(test_set)
 
         return hotelling_t2_plot_p2(hotelling, self._alpha, self._hotelling_limit_p2)
     
+    @require_fitted
     def spe_plot_p1(self):
         '''
         Generates an interactive plot visualizing the Squared Prediction Error (SPE) statistic for Phase I observations.
@@ -763,15 +729,13 @@ class PCA(BaseEstimator, TransformerMixin):
         -----
         - The method assumes that the SPE statistics (`self._spe`) and the threshold (`self._spe_limit`) have been previously calculated and are stored as attributes of the class.
         - The plot's title includes the significance level (alpha) and the threshold value, providing context for the analysis.
-        '''
-
-        if not hasattr(self, '_scores'):
-            raise ModelNotFittedError()
-        
+        '''        
         spe_df = pd.DataFrame({'observation': range(self._nobs), 'SPE': self._spe})
 
         return spe_plot_p1(spe_df, self._alpha, self._spe_limit)
     
+    @require_fitted
+    @validate_dataframe('test_set')
     def spe_plot_p2(self, test_set:pd.DataFrame):
         '''
         Generates an interactive plot visualizing the Squared Prediction Error (SPE) statistic for Phase II observations.
@@ -800,12 +764,6 @@ class PCA(BaseEstimator, TransformerMixin):
         - The method assumes that the SPE statistics and the threshold (`self._spe_limit`) have been previously calculated and are stored as attributes of the class.
         - The plot's title includes the significance level (alpha) and the threshold value, providing context for the analysis.
         '''
-        if not hasattr(self, '_scores'):
-            raise ModelNotFittedError()
-        
-        if not isinstance(test_set, pd.DataFrame):
-            raise NotDataFrameError(type(test_set).__name__)
-
         SPE, _ = self.spe(test_set)
 
         nobs = len(SPE)
@@ -813,6 +771,8 @@ class PCA(BaseEstimator, TransformerMixin):
 
         return spe_plot_p2(spe, self._alpha, self._spe_limit)
 
+    @validate_dataframe('data')
+    @require_fitted
     def residual_barplot(self, data:pd.DataFrame):
         '''
         Generates an interactive bar plot visualizing the residuals for a specific observation within the dataset.
@@ -844,13 +804,7 @@ class PCA(BaseEstimator, TransformerMixin):
         -----
         - The method assumes that the model and its variables (`self._variables`) have been previously defined.
         - The SPE (Squared Prediction Error) is calculated as part of the residuals analysis and is displayed in the plot title for reference.
-        '''
-        if not hasattr(self, '_scores'):
-            raise ModelNotFittedError()
-       
-        if not isinstance(data, pd.DataFrame):
-            raise NotDataFrameError(type(data).__name__)
-    
+        '''   
         if data.shape[1] != len(self._variables):
             raise ValueError(f'Number of features in data must be {len(self._variables)}')
         
