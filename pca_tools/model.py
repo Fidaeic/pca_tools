@@ -13,9 +13,9 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from .exceptions import NotDataFrameError, ModelNotFittedError, NotAListError, NotBoolError, NComponentsError
 from sklearn.base import BaseEstimator, TransformerMixin
-import pdb
 from sklearn.decomposition import PCA as PCA_sk
 from .functions import contribution_status
+from .plotting import score_plot, biplot, loadings_barplot, hotelling_t2_plot_p1, hotelling_t2_plot_p2, spe_plot_p1, spe_plot_p2, residuals_plot
 
 class PCA(BaseEstimator, TransformerMixin):
     def __init__(self, n_comps:int=None, 
@@ -550,6 +550,12 @@ class PCA(BaseEstimator, TransformerMixin):
         comp2 : int
             The number of the second component.
 
+        hue : pd.Series
+            A pandas Series with the hue of the plot. It must have the same length as the number of observations
+        
+        test_set : pd.DataFrame
+            A pandas DataFrame that contains the held-out observations that will be projected onto the latent space
+
         Returns
         -------
         None
@@ -560,46 +566,11 @@ class PCA(BaseEstimator, TransformerMixin):
         if not hasattr(self, '_scores'):
             raise ModelNotFittedError()
         
-        scores = self._scores.reset_index()
-
-        hline = alt.Chart(pd.DataFrame({'y': [0]})).mark_rule(strokeDash=[12, 6]).encode(y='y').interactive()
-        vline = alt.Chart(pd.DataFrame({'x': [0]})).mark_rule(strokeDash=[12, 6]).encode(x='x').interactive()
-
-        if hue is not None:
-            # Check if hue is a python series or a numpy array
-            if not isinstance(hue, pd.Series):
-                raise TypeError("Hue must be a pandas Series")
-            
-            scores[hue.name] = hue
-        
-            scatter = alt.Chart(scores).mark_circle().encode(
-                x=f"PC_{comp1}:Q",
-                y=f"PC_{comp2}:Q",
-                tooltip=[f"PC_{comp1}", f"PC_{comp2}", hue.name],
-                color=alt.Color(hue.name)
-            ).interactive()
-
-        else:
-            scatter = alt.Chart(scores).mark_point().encode(
-                x=f"PC_{comp1}:Q",
-                y=f"PC_{comp2}:Q",
-                tooltip=[self._index_name, f"PC_{comp1}", f"PC_{comp2}"]
-            ).interactive()
-
         if test_set is not None:
 
-            scores_test = self.transform(test_set)
+            test_set = self.transform(test_set)
 
-            scores_test = scores_test.reset_index()
-            scatter_test = alt.Chart(scores_test).mark_point(color='black', opacity=.1).encode(
-                x=f"PC_{comp1}",
-                y=f"PC_{comp2}",
-                tooltip=[self._index_name, f"PC_{comp1}", f"PC_{comp2}"]
-            ).interactive()
-
-            return (scatter_test+ scatter + vline + hline)
-
-        return (scatter + vline + hline)
+        return score_plot(scores=self._scores, comp1=comp1, comp2=comp2, explained_variance=self._explained_variance, hue=hue, index_name=self._index_name, test_set=test_set)
     
     def biplot(self, comp1:int, comp2:int, hue:pd.Series=None, test_set:pd.DataFrame=None):
         '''
@@ -626,71 +597,11 @@ class PCA(BaseEstimator, TransformerMixin):
         if not hasattr(self, '_scores'):
             raise ModelNotFittedError()
 
-        scores = self._scores.copy()
-        if self._scores.shape[0]>5000:
-            mask = np.random.choice(self._scores.shape[0], 5000, replace=False)
-            scores = self._scores.iloc[mask]
-
-        max_pc1 = self._scores[f'PC_{comp1}'].max()
-        max_pc2 = self._scores[f'PC_{comp2}'].max()
-        hypothenuse = (max_pc1**2 + max_pc2**2)**0.5
-
-        max_loadings1 = self._loadings[f'PC_{comp1}'].max()
-        max_loadings2 = self._loadings[f'PC_{comp2}'].max()
-        hypothenuse_loadings = (max_loadings1**2 + max_loadings2**2)**0.5
-
-        ratio = hypothenuse/hypothenuse_loadings
-
-        loadings = self._loadings.copy()*ratio
-        loadings.index.name = 'variable'
-        loadings.reset_index(inplace=True)
-
-        
-        if hue is not None:
-            # Check if hue is a python series or a numpy array
-            if not isinstance(hue, pd.Series):
-                raise ValueError("Hue must be a pandas Series")
-            
-            scores[hue.name] = hue
-
-            scores_plot = alt.Chart(scores.reset_index()).mark_circle().encode(
-                x=alt.X(f'PC_{comp1}',title=f'PC {comp1} - {self._explained_variance[comp1-1]*100:.2f} %'),
-                y=alt.Y(f'PC_{comp2}',title=f'PC {comp2} - {self._explained_variance[comp2-1]*100:.2f} %'),
-                tooltip=[self._index_name, f"PC_{comp1}", f"PC_{comp2}", hue.name],
-                color=alt.Color(hue.name)
-            ).interactive()
-
-        else:
-            scores_plot = alt.Chart(scores.reset_index()).mark_circle().encode(
-                x=alt.X(f'PC_{comp1}',title=f'PC {comp1} - {self._explained_variance[comp1-1]*100:.2f} %'),
-                y=alt.Y(f'PC_{comp2}',title=f'PC {comp2} - {self._explained_variance[comp2-1]*100:.2f} %'),
-                tooltip=[self._index_name, f"PC_{comp1}", f"PC_{comp2}"]
-            ).interactive()
-
-        
-        loadings_plot = alt.Chart(loadings).mark_circle(color='red').encode(
-            x=f"PC_{comp1}",
-            y=f"PC_{comp2}",
-            tooltip=['variable', f"PC_{comp1}", f"PC_{comp2}"]
-        )
-
-        hline = alt.Chart(pd.DataFrame({'y': [0]})).mark_rule(strokeDash=[12, 6]).encode(y='y')
-        vline = alt.Chart(pd.DataFrame({'x': [0]})).mark_rule(strokeDash=[12, 6]).encode(x='x')
-
         if test_set is not None:
 
-            scores_test = self.transform(test_set)
-
-            scores_test = scores_test.reset_index()
-            scatter_test = alt.Chart(scores_test).mark_point(color='black', opacity=.1).encode(
-                x=f"PC_{comp1}",
-                y=f"PC_{comp2}",
-                tooltip=[self._index_name, f"PC_{comp1}", f"PC_{comp2}"]
-            ).interactive()
-
-            return (scatter_test + scores_plot + loadings_plot + vline + hline)
+            test_set = self.transform(test_set)
     
-        return (scores_plot + loadings_plot+ vline + hline)
+        return biplot(scores=self._scores, loadings=self._loadings, comp1=comp1, comp2=comp2, explained_variance=self._explained_variance, hue=hue, index_name=self._index_name, test_set=test_set)
     
     def loadings_barplot(self, comp:int):
         '''
@@ -711,16 +622,8 @@ class PCA(BaseEstimator, TransformerMixin):
         if not hasattr(self, '_scores'):
             raise ModelNotFittedError()
 
-        loadings = self._loadings.copy()
-        loadings.index.name = 'variable'
-        loadings.reset_index(inplace=True)
-
         # Altair plot for the loadings
-        return alt.Chart(loadings).mark_bar().encode(
-            x=alt.X('variable', title='Variable'),
-            y=alt.Y(f'PC_{comp}',title=f'Loadings of PC {comp} - {self._explained_variance[comp-1]*100:.2f} %'),
-            tooltip=['variable', f'PC_{comp}']
-        ).interactive()
+        return loadings_barplot(self._loadings, self._explained_variance, comp)
 
     def difference_plot(self, 
                         X_obs:pd.Series,):   
@@ -787,30 +690,8 @@ class PCA(BaseEstimator, TransformerMixin):
         '''
         if not hasattr(self, '_scores'):
             raise ModelNotFittedError()
-        
-        hotelling = pd.DataFrame({'observation': range(self._nobs), 'T2': self._hotelling})
 
-        hotelling_chart = alt.Chart(hotelling).mark_line().encode(
-            x=alt.X('observation', title='Observation'),
-            y=alt.Y('T2', title="Hotelling's T2"),
-            tooltip=['observation', "T2"],
-        ).properties(
-            title=f'Hotelling\'s T2 statistic plot \n alpha: {self._alpha*100}% -- Threshold: {self._hotelling_limit_p1:.2f}',
-        ).interactive()
-
-        hotelling_chart.configure_title(
-            fontSize=20,
-            font='Courier',
-            anchor='start',
-            color='gray'
-        )
-
-        threshold = alt.Chart(
-                        pd.DataFrame({'y': [self._hotelling_limit_p1]})).mark_rule(
-                        strokeDash=[12, 6], color='red').encode(y='y')
-
-        # Altair plot for the Hotelling's T2 statistic
-        return (hotelling_chart + threshold)
+        return hotelling_t2_plot_p1(self._hotelling, self._alpha, self._hotelling_limit_p1)
     
     def hotelling_t2_plot_p2(self, test_set:pd.DataFrame):
         '''
@@ -848,32 +729,7 @@ class PCA(BaseEstimator, TransformerMixin):
 
         hotelling = self.hotelling_t2(test_set)
 
-        n_obs = len(hotelling)
-
-        hotelling = pd.DataFrame({'observation': range(n_obs), 'T2': hotelling})
-
-        hotelling_chart = alt.Chart(hotelling).mark_line().encode(
-            x=alt.X('observation', title='Observation'),
-            y=alt.Y('T2', title="Hotelling's T2"),
-            tooltip=['observation', "T2"],
-        ).properties(
-            title=f'Hotelling\'s T2 statistic plot \n alpha: {self._alpha*100}% -- Threshold: {self._hotelling_limit_p2:.2f}',
-        ).interactive()
-
-        hotelling_chart.configure_title(
-            fontSize=20,
-            font='Courier',
-            anchor='start',
-            color='gray'
-        )
-
-        threshold = alt.Chart(
-                        pd.DataFrame({'y': [self._hotelling_limit_p2]})).mark_rule(
-                        strokeDash=[12, 6], color='red').encode(y='y')
-
-        # Altair plot for the Hotelling's T2 statistic
-        return (hotelling_chart + threshold)
-
+        return hotelling_t2_plot_p2(hotelling, self._alpha, self._hotelling_limit_p2)
     
     def spe_plot_p1(self):
         '''
@@ -901,29 +757,9 @@ class PCA(BaseEstimator, TransformerMixin):
         if not hasattr(self, '_scores'):
             raise ModelNotFittedError()
         
-        spe = pd.DataFrame({'observation': range(self._nobs), 'SPE': self._spe})
+        spe_df = pd.DataFrame({'observation': range(self._nobs), 'SPE': self._spe})
 
-        spe_chart = alt.Chart(spe).mark_line().encode(
-            x=alt.X('observation', title='Observation'),
-            y=alt.Y('SPE', title='SPE'),
-            tooltip=['observation', "SPE"],
-        ).properties(
-            title=f'SPE statistic plot \n alpha: {self._alpha*100}% -- Threshold: {self._spe_limit:.2f}',
-        ).interactive()
-
-        spe_chart.configure_title(
-            fontSize=20,
-            font='Courier',
-            anchor='start',
-            color='gray'
-        )
-
-        threshold = alt.Chart(
-                        pd.DataFrame({'y': [self._spe_limit]})).mark_rule(
-                        strokeDash=[12, 6], color='red').encode(y='y')
-
-        # Altair plot for the SPE statistic
-        return (spe_chart + threshold)
+        return spe_plot_p1(spe_df, self._alpha, self._spe_limit)
     
     def spe_plot_p2(self, test_set:pd.DataFrame):
         '''
@@ -964,27 +800,7 @@ class PCA(BaseEstimator, TransformerMixin):
         nobs = len(SPE)
         spe = pd.DataFrame({'observation': range(nobs), 'SPE': SPE})
 
-        spe_chart = alt.Chart(spe).mark_line().encode(
-            x=alt.X('observation', title='Observation'),
-            y=alt.Y('SPE', title='SPE'),
-            tooltip=['observation', "SPE"],
-        ).properties(
-            title=f'SPE statistic plot \n alpha: {self._alpha*100}% -- Threshold: {self._spe_limit:.2f}',
-        ).interactive()
-
-        spe_chart.configure_title(
-            fontSize=20,
-            font='Courier',
-            anchor='start',
-            color='gray'
-        )
-
-        threshold = alt.Chart(
-                        pd.DataFrame({'y': [self._spe_limit]})).mark_rule(
-                        strokeDash=[12, 6], color='red').encode(y='y')
-
-        # Altair plot for the SPE statistic
-        return (spe_chart + threshold)
+        return spe_plot_p2(spe, self._alpha, self._spe_limit)
 
     def residual_barplot(self, data:pd.DataFrame):
         '''
@@ -1035,10 +851,4 @@ class PCA(BaseEstimator, TransformerMixin):
 
         residuals = pd.DataFrame({'variable': self._variables, 'residual': residuals[0]})
         # Altair plot for the residuals
-        return alt.Chart(residuals).mark_bar().encode(
-            x=alt.X('variable', title='Variable'),
-            y=alt.Y('residual', title='Residual'),
-            tooltip=['variable', 'residual']
-        ).properties(
-            title=f'Residuals for observation {str(data.index.values[0])} - SPE: {SPE[0]:.2f}'
-        ).interactive()
+        return residuals_plot(residuals, SPE, data)
