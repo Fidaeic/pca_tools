@@ -17,6 +17,7 @@ from sklearn.decomposition import PCA as PCA_sk
 from .functions import contribution_status
 from .plotting import score_plot, biplot, loadings_barplot, hotelling_t2_plot_p1, hotelling_t2_plot_p2, spe_plot_p1, spe_plot_p2, residuals_barplot
 from .utils import validate_dataframe, require_fitted, cache_result
+from .preprocess import preprocess
 
 class PCA(BaseEstimator, TransformerMixin):
     def __init__(self, n_comps:int=None, 
@@ -74,6 +75,38 @@ class PCA(BaseEstimator, TransformerMixin):
             True if the model has been fitted (i.e., the _scores attribute is present); False otherwise.
         """
         return hasattr(self, '_scores')
+    
+    def _validate_ncomps(self, data: pd.DataFrame):
+        if self._ncomps is None:
+            self._ncomps = data.shape[1]
+
+        if self._ncomps <= 0 or self._ncomps > data.shape[1]:
+            raise NComponentsError(data.shape[1])
+
+    def _initialize_attributes(self, data: pd.DataFrame):
+        self._variables = data.columns
+        self._index = data.index
+        self._index_name = data.index.name
+        self._nobs, self._nvars = data.shape
+
+    def _preprocess_data(self, data: pd.DataFrame) -> np.ndarray:
+        X = data.copy()
+        if self._standardize:
+            X = preprocess(data=X, scaler=self._scaler, numerical_features=self._numerical_features)
+        return X.values
+
+    def _fit_model(self, X: np.ndarray):
+        self.model.fit(X)
+        self._loadings = pd.DataFrame(self.model.components_.T, columns=[f"PC_{i+1}" for i in range(self._ncomps)], index=self._variables)
+        self._scores = pd.DataFrame(self.model.transform(X), columns=[f"PC_{i+1}" for i in range(self._ncomps)], index=self._index)
+
+    def _calculate_metrics(self, data: pd.DataFrame, X: np.ndarray):
+        self._explained_variance = self.model.explained_variance_ratio_
+        self._rsquared_acc = np.cumsum(self.model.explained_variance_ratio_)
+        self._eigenvals = np.var(self._scores.values, axis=0)
+        self._residuals_fit = X - self._scores @ self._loadings.T
+        self._mean_train = np.mean(data.values, axis=0)
+        self._std_train = np.std(data.values, axis=0)
 
     @validate_dataframe('data')
     def fit(self, data, y=None):
@@ -107,21 +140,10 @@ class PCA(BaseEstimator, TransformerMixin):
         Returns:
         - X_transform (pd.DataFrame): The scaled version of the input data, with the original index and columns preserved.
         """
-
-        index = data.index
-        columns = data.columns
-
-        X_transform = data.copy()
-
-        if self._numerical_features:
-            X_transform[self._numerical_features] = self._scaler.transform(X_transform[self._numerical_features])
-        else:
-            X_transform = pd.DataFrame(self._scaler.transform(X_transform), columns=columns, index=index)
-
-        return X_transform
+        return preprocess(data, self._scaler, self._numerical_features)
     
     @validate_dataframe('data')
-    def train(self, data:pd.DataFrame):
+    def train(self, data: pd.DataFrame):
         '''
         Trains the PCA model using the provided dataset.
 
@@ -152,33 +174,11 @@ class PCA(BaseEstimator, TransformerMixin):
         - Principal components are extracted using an iterative process that maximizes the variance explained by each component.
         - The method calculates and stores various metrics related to the PCA model, including the loadings, scores, eigenvalues, and the cumulative variance explained by the extracted components.
         '''
-        if self._ncomps is None:
-            self._ncomps = data.shape[1]
-
-        if self._ncomps <= 0 or self._ncomps > data.shape[1]:
-            raise NComponentsError(data.shape[1])
-
-        self._variables = data.columns
-        self._index = data.index
-        self._index_name = data.index.name
-        self._nobs, self._nvars = data.shape
-
-        X = data.copy()
-        if self._standardize:
-            X = self.preprocess(data=X)
-
-        X = X.values
-
-        self.model.fit(X)
-
-        self._loadings = pd.DataFrame(self.model.components_.T, columns=[f"PC_{i+1}" for i in range(self._ncomps)], index=self._variables)
-        self._scores = pd.DataFrame(self.model.transform(X), columns=[f"PC_{i+1}" for i in range(self._ncomps)], index=self._index)
-        self._explained_variance = self.model.explained_variance_ratio_
-        self._rsquared_acc = np.cumsum(self.model.explained_variance_ratio_)
-        self._eigenvals = np.var(self._scores.values, axis=0)
-        self._residuals_fit = X - self._scores @ self._loadings.T
-        self._mean_train = np.mean(data.values, axis=0)
-        self._std_train = np.std(data.values, axis=0)
+        self._validate_ncomps(data)
+        self._initialize_attributes(data)
+        X = self._preprocess_data(data)
+        self._fit_model(X)
+        self._calculate_metrics(data, X)
 
     @validate_dataframe('data')
     @require_fitted
@@ -387,7 +387,7 @@ class PCA(BaseEstimator, TransformerMixin):
 
         return SPE.tolist(), residuals
 
-    @validate_dataframe('data')
+    @validate_dataframe('X_predict')
     @require_fitted
     def project(self, X_predict):
         """
@@ -437,95 +437,151 @@ class PCA(BaseEstimator, TransformerMixin):
         '''
         hotelling, SPE, _, _ = self.project(X_predict)
 
-        _, hotelling_95, _ = self.control_limits(alpha=.95)
-        _, hotelling_99, _ = self.control_limits(alpha=.99)
-
-        if np.any(hotelling >= hotelling_99):
-            status = 'red'
-        elif np.any(hotelling >= hotelling_95):
-            status = 'yellow'
-        else:
-            status = 'green'
-
         X_transform = X_predict.copy()
         if self._standardize:
             X_transform = self.preprocess(data=X_transform)
 
         t2_contributions, _ = self.t2_contribution(X_predict)
+        spe_contributions, _ = self.spe_contribution(X_predict)
 
-        t2_contributions['status'] = t2_contributions.apply(contribution_status, axis=1)
-        t2_contributions = t2_contributions.sort_values(by='contribution', ascending=False).iloc[:30]
+        # Merge the contributions of the variables to the T2 and SPE statistics
+        t2_contributions = t2_contributions.set_index('variable')
+        spe_contributions = spe_contributions.set_index('variable')
 
-        result_dict = {
-            row['variable']: {
-                'contribution': row['relative_contribution'],
-                'status': row['status']
-            }
-            for _, row in t2_contributions.iterrows()
-        }
+        contributions_df = t2_contributions.join(spe_contributions, lsuffix='_t2', rsuffix='_spe')
             
-        return {'0days':
-                {'anomaly_level_hotelling': hotelling,
+        return {'anomaly_level_hotelling': hotelling,
                  'control_limit_hotelling': self._hotelling_limit_p2,
                  'anomaly_level_spe': SPE,
                 'control_limit_spe': self._spe_limit,
-                'status': status,
-                'components':result_dict}}
+                'contributions': contributions_df.to_dict(orient='index')}
     
     @validate_dataframe('observation')
-    def t2_contribution(self, observation:pd.DataFrame):
-
+    def t2_contribution(self, observation: pd.DataFrame) -> pd.DataFrame:
+        """
+        Calculates the contributions of each variable to the T2 statistic for a given observation.
+    
+        Parameters
+        ----------
+        observation : pd.DataFrame
+            The observation to analyze. Must be a single observation (1 row) in a pandas DataFrame format.
+    
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame containing the contributions of each variable to the T2 statistic.
+        """
         hotelling = self.hotelling_t2(observation)
-
-        # Get the scores  of the projection of the new observation
         projected_scores = self.transform(observation)
-
-        # Calculate the normalized scores
-        normalized_scores = projected_scores**2/self._eigenvals
+        normalized_scores = self._calculate_normalized_scores(projected_scores)
+        high_scores = self._get_high_scores(normalized_scores)
+        contributions_df = self._calculate_contributions(observation, projected_scores, high_scores)
+        return contributions_df.sort_values("contribution", ascending=False), hotelling
+    
+    def _calculate_normalized_scores(self, projected_scores: pd.DataFrame) -> np.ndarray:
+        """
+        Calculates the normalized scores for the projected data.
+    
+        Parameters
+        ----------
+        projected_scores : pd.DataFrame
+            The projected scores of the observation.
+    
+        Returns
+        -------
+        np.ndarray
+            The normalized scores.
+        """
+        normalized_scores = projected_scores**2 / self._eigenvals
         normalized_scores /= np.max(normalized_scores)
-
-        #We will consider that high normalized scores are those which are above 0.5
-        high_scores = np.where(normalized_scores>.5)[1]
-
-        # Truncate the loadings, scores and eigenvals to get the contribution of the highest scores
+        return normalized_scores
+    
+    def _get_high_scores(self, normalized_scores: np.ndarray) -> np.ndarray:
+        """
+        Identifies the high scores from the normalized scores.
+    
+        Parameters
+        ----------
+        normalized_scores : np.ndarray
+            The normalized scores.
+    
+        Returns
+        -------
+        np.ndarray
+            The indices of the high scores.
+        """
+        return np.where(normalized_scores > 0.5)[1]
+    
+    def _calculate_contributions(self, observation: pd.DataFrame, projected_scores: pd.DataFrame, high_scores: np.ndarray) -> pd.DataFrame:
+        """
+        Calculates the contributions of each variable to the T2 statistic.
+    
+        Parameters
+        ----------
+        observation : pd.DataFrame
+            The observation to analyze.
+        projected_scores : pd.DataFrame
+            The projected scores of the observation.
+        high_scores : np.ndarray
+            The indices of the high scores.
+    
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame containing the contributions of each variable to the T2 statistic.
+        """
         truncated_loadings = self._loadings.values[:, high_scores]
         truncated_scores = projected_scores.values[:, high_scores]
         truncated_eigenvals = self._eigenvals[high_scores]
-
-        # Calculate the difference from the mean
         mean_diff = (observation - self._mean_train).values
-
-        # Vectorized calculation of partial contributions
-        partial_contributions = ((truncated_scores / truncated_eigenvals) @ truncated_loadings.T) * mean_diff
-
-        # Set negative contributions to zero
-        partial_contributions = np.maximum(partial_contributions, 0)
-
-        # Sum contributions across components
-        contributions = partial_contributions.sum(axis=0)
-
-        contributions_df = pd.DataFrame({'variable': self._variables, 'contribution': contributions})
-
-        # Keep only the positive contributions. Negative contributions make the score smaller
-        contributions_df = contributions_df[contributions_df['contribution']>0]
-        
-        # Calculate the total sum of contributions
-        total_contribution = contributions_df['contribution'].sum()
-        # Calculate the relative contributions
-        contributions_df['relative_contribution'] = contributions_df['contribution'] / total_contribution
-        return contributions_df, hotelling
     
-    def spe_contribution(self, observation:pd.DataFrame):
-        SPE, residuals = self.spe(observation)
-
-        contributions_df = pd.DataFrame({'variable': self._variables, 'contribution': residuals[0]**2})
-        # Calculate the total sum of contributions
+        partial_contributions = ((truncated_scores / truncated_eigenvals) @ truncated_loadings.T) * mean_diff
+        partial_contributions = np.maximum(partial_contributions, 0)
+        contributions = partial_contributions.sum(axis=0)
+    
+        contributions_df = pd.DataFrame({'variable': self._variables, 'contribution': contributions})
+        contributions_df = contributions_df[contributions_df['contribution'] > 0]
         total_contribution = contributions_df['contribution'].sum()
-        # Calculate the relative contributions
         contributions_df['relative_contribution'] = contributions_df['contribution'] / total_contribution
-
-
+    
+        return contributions_df
+    
+    def spe_contribution(self, observation: pd.DataFrame) -> pd.DataFrame:
+        """
+        Calculates the contributions of each variable to the SPE (Squared Prediction Error) statistic for a given observation.
+    
+        Parameters
+        ----------
+        observation : pd.DataFrame
+            The observation to analyze. Must be a single observation (1 row) in a pandas DataFrame format.
+    
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame containing the contributions of each variable to the SPE statistic.
+        """
+        SPE, residuals = self.spe(observation)
+        contributions_df = self._calculate_spe_contributions(residuals)
         return contributions_df, SPE
+    
+    def _calculate_spe_contributions(self, residuals: np.ndarray) -> pd.DataFrame:
+        """
+        Calculates the contributions of each variable to the SPE statistic.
+    
+        Parameters
+        ----------
+        residuals : np.ndarray
+            The residuals of the observation.
+    
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame containing the contributions of each variable to the SPE statistic.
+        """
+        contributions_df = pd.DataFrame({'variable': self._variables, 'contribution': residuals[0]**2})
+        total_contribution = contributions_df['contribution'].sum()
+        contributions_df['relative_contribution'] = contributions_df['contribution'] / total_contribution
+        return contributions_df.sort_values('contribution', ascending=False)
 
 
     '''

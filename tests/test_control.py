@@ -33,8 +33,8 @@ def test_anomalies(sample_data):
     pca_model.fit(sample_data)  # Assuming the PCA class has a fit method that sets necessary attributes
 
     # Action
-    predictions = pca_model.predict(sample_data)
+    predictions = pca_model.predict(sample_data.iloc[[anomalous_observation]])
 
     # Verification
-    assert predictions['0days']['anomaly_level_hotelling'][anomalous_observation] > predictions['0days']['control_limit_hotelling'], "Anomaly detected"
-    assert predictions['0days']['anomaly_level_spe'][anomalous_observation] > predictions['0days']['control_limit_spe'], "Anomaly detected"
+    assert predictions['anomaly_level_hotelling'] > predictions['control_limit_hotelling'], "Anomaly detected"
+    assert predictions['anomaly_level_spe'] > predictions['control_limit_spe'], "Anomaly detected"
