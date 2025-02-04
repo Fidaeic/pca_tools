@@ -265,126 +265,172 @@ class PCA(BaseEstimator, TransformerMixin):
         -----
         - This operation is the inverse of the PCA transformation, but it may not perfectly reconstruct the original data if the PCA transformation was lossy (i.e., if some components were discarded).
         '''
-        if self._standardize==True:
+        # Reconstruct in the scaled space via PCA loadings multiplication.
+        # Ensure data is converted to NumPy array for multiplication.
+        projection = data.values @ self._loadings.values.T
+
+        if self._standardize:
+            # Create a DataFrame for clarity and to align columns.
+            reconstructed_df = pd.DataFrame(projection, index=data.index, columns=self._variables)
+            
             if self._numerical_features:
-                result = data @ self._loadings.T
-                result = self._scaler.inverse_transform(result[self._numerical_features])
+                # Apply inverse scaling only on the numerical features.
+                # This implies that only the numerical columns were scaled during preprocessing.
+                scaled_part = reconstructed_df[self._numerical_features]
+                inv_scaled = self._scaler.inverse_transform(scaled_part)
+                # Replace the scaled numerical features with their inverse-scaled values.
+                reconstructed_df.loc[:, self._numerical_features] = inv_scaled
+                result = reconstructed_df.values
             else:
-                result = self._scaler.inverse_transform(data @ self._loadings.T)
+                # If no specific numerical features were provided, inverse scale the entire projection.
+                result = self._scaler.inverse_transform(projection)
         else:
-            result = data @ self._loadings.T
+            result = projection
 
         return pd.DataFrame(result, columns=self._variables, index=data.index)
     
     @cache_result
     @require_fitted
-    def control_limits(self, alpha:float=0.95):
-        '''
+    def control_limits(self, alpha: float = 0.95) -> tuple[float, float, float]:
+        """
         Calculates the control limits for Hotelling's T2 and SPE (Squared Prediction Error) statistics.
-
-        This method computes the control limits for both the Hotelling's T2 statistic and the SPE statistic for a PCA model. The control limits are calculated for two phases: Phase I (initial control limit based on the model fitting dataset) and Phase II (control limit for monitoring new observations). These limits are used to detect outliers or shifts in the process mean or variability in multivariate data.
-
+    
+        This method computes the control limits for both Hotelling's T2 and SPE statistics for a PCA model.
+        Two phases of control limits are computed:
+          - Phase I: Based on the model fitting dataset.
+          - Phase II: For monitoring new observations.
+        These limits help detect outliers or shifts in process variability.
+    
         Parameters
         ----------
         alpha : float, optional
-            The significance level used to calculate the control limits. It represents the probability of observing a point within the control limits under the assumption that the process is in control. The default value is 0.95, corresponding to a 95% confidence level.
-
-        Attributes Set
-        --------------
-        _hotelling_limit_p1 : float
-            The control limit for Hotelling's T2 statistic in Phase I.
-        _hotelling_limit_p2 : float
-            The control limit for Hotelling's T2 statistic in Phase II.
-        _spe_limit : float
-            The control limit for the SPE statistic.
-
+            The significance level used to calculate the control limits (default is 0.95, corresponding to a 95% confidence level).
+    
+        Returns
+        -------
+        tuple[float, float, float]
+            A tuple containing:
+                - hotelling_limit_p1 : float
+                    Control limit for Hotelling's T2 in Phase I.
+                - hotelling_limit_p2 : float
+                    Control limit for Hotelling's T2 in Phase II.
+                - spe_limit : float
+                    Control limit for the SPE statistic.
+    
         Notes
         -----
-        - The Hotelling's T2 statistic is a multivariate analogue of the univariate t-square statistic. It is used to test the hypothesis that the mean vector of a multivariate population is equal to a given vector.
-        - The SPE statistic measures the squared prediction error of each observation from the PCA model. It is used to detect observations that do not conform to the model.
-        - The control limits are based on the F-distribution for Hotelling's T2 and the chi-squared distribution for SPE, adjusted for the sample size and the number of principal components in the model.
-        '''
-        # Hotelling's T2 control limit. Phase I
-        dfn = self._ncomps/2
-        dfd = (self._nobs-self._ncomps-1)/2
-        const = ((self._nobs-1)**2)/self._nobs
-
-        hotelling_limit_p1 = beta.ppf(alpha, dfn, dfd)*const
-
-        # Hotelling's T2 control limit. Phase II
-        const = (self._ncomps * (self._nobs**2 -1)) / (self._nobs * (self._nobs - self._ncomps))
-        dfn = self._ncomps
-        dfd = self._nobs - self._ncomps
-
-        hotelling_limit_p2 = f.ppf(alpha, dfn, dfd)*const
-
-        # SPE control limit
-        b, nu = np.mean(self._spe), np.var(self._spe)
-        
-        df = (2*b**2)/nu
-        const = nu/(2*b)
-
-        spe_limit = chi2.ppf(alpha, df)*const
-
+        - Hotelling's T2 is a multivariate analogue of the univariate t-square statistic.
+        - SPE measures the squared prediction error from the PCA model.
+        - Limits are derived from the beta, F-, and chi-squared distributions, adjusted for sample size and number of components.
+        """
+        # Phase I: Hotelling's T2 control limit
+        # Degrees of freedom for beta distribution approximation
+        dfn_phase1 = self._ncomps / 2
+        dfd_phase1 = (self._nobs - self._ncomps - 1) / 2
+        constant_phase1 = ((self._nobs - 1) ** 2) / self._nobs
+        hotelling_limit_p1 = beta.ppf(alpha, dfn_phase1, dfd_phase1) * constant_phase1
+    
+        # Phase II: Hotelling's T2 control limit
+        constant_phase2 = (self._ncomps * (self._nobs ** 2 - 1)) / (self._nobs * (self._nobs - self._ncomps))
+        dfn_phase2 = self._ncomps
+        dfd_phase2 = self._nobs - self._ncomps
+        hotelling_limit_p2 = f.ppf(alpha, dfn_phase2, dfd_phase2) * constant_phase2
+    
+        # SPE (Squared Prediction Error) control limit
+        mean_spe = np.mean(self._spe)
+        var_spe = np.var(self._spe)
+        # Calculate degrees of freedom based on SPE moments
+        df_spe = (2 * mean_spe ** 2) / var_spe if var_spe != 0 else 1  # safeguard against division by zero
+        constant_spe = var_spe / (2 * mean_spe) if mean_spe != 0 else 1
+        spe_limit = chi2.ppf(alpha, df_spe) * constant_spe
+    
         return hotelling_limit_p1, hotelling_limit_p2, spe_limit
     
     @validate_dataframe('data')
     @require_fitted
-    def hotelling_t2(self, data):
-        '''
-        Hotelling's T2 represents the estimated squared Mahalanobis distance from the center of the latent subspace
-        to the projection of an observation onto this subspace (Ferrer, 2014).
-        We calculate this statistic as T2 = sum(t_a**2/lambda_a), being lambda_a the eigenvalue of the ath component
-        and t_a the score of the ith observation in the ath component.
-        Under the assumption that the scores follow a multivariate normal distribution, it holds (Tracy, 1992), that in Phase I,
-        T2 follows a beta distribution with A/2 and (m-A-1)/2 degrees of freedom, being A the number of components
-        and m the number of observations
-
-        This statistic help us to detect outliers given that it is a measure of the distance between the centroid
-        of the subspace and an observation. Observations that are above the control limit might be considered extreme outliers
-
+    def hotelling_t2(self, data: pd.DataFrame) -> list[float]:
+        """
+        Compute Hotelling's T² statistic for each observation.
+    
+        Hotelling's T² represents the estimated squared Mahalanobis distance from the center of the latent 
+        subspace to the projection of each observation. It is calculated as:
+        
+            T² = sum((t_a)**2 / lambda_a)
+        
+        where lambda_a is the eigenvalue of the ath component and t_a is the score of the observation 
+        on the ath component. Under the assumption of multivariate normal scores, T² can be used 
+        to detect outliers; observations with T² above the control limit may be considered extreme outliers.
+    
+        Parameters
+        ----------
+        data : pd.DataFrame
+            Input data to be transformed onto the latent space.
+    
         Returns
         -------
-        Hotelling's T2 statistic for every observation.
-        '''
+        list[float]
+            A list of Hotelling's T² statistics, one per observation.
+        """
+        # Project data using the fitted PCA model.
         predicted_scores = self.transform(data)
-
-        return list(np.sum((predicted_scores.values**2) / self._eigenvals, axis=1))
+        
+        # Calculate Hotelling's T²: square the scores and normalize by corresponding eigenvalues.
+        # Using np.square for clarity.
+        t2_values = np.sum(np.square(predicted_scores.values) / self._eigenvals, axis=1)
+        
+        # Returning the result as a list for consistency with previous implementations.
+        return t2_values.tolist()
     
     @validate_dataframe('data')
     @require_fitted
-    def spe(self, data):
-        '''
-        Represents the sum of squared prediction errors. The value is given by the expression 
-        e^T_i * e_i, so the SPE statistic is the scalar product of the residuals vector of observation i
-        multiplied by its transposed self.
+    def spe(self, data: pd.DataFrame) -> tuple[list[float], np.ndarray]:
+        """
+        Computes the Squared Prediction Error (SPE) statistic for every observation in the given data.
+    
+        SPE is defined as the squared Euclidean distance between the original data and its projection 
+        onto the PCA subspace. In other words, for each observation, SPE is calculated as:
         
-        The SPE statistic represents the squared Euclidean distance of an observation from the generated
-        subspace, and gives a measure of how close the observation is to the A-dimensional subspace.
-        
-        Observations that are above the control limit can be considered as moderate outliers.
-
+            SPE = || e ||²  where e = original observation - reconstruction
+    
+        High SPE values indicate that the observation is not well represented by the PCA model, 
+        which may suggest that the observation is an outlier.
+    
+        Parameters
+        ----------
+        data : pd.DataFrame
+            The input data for which the SPE statistic will be calculated.
+    
         Returns
         -------
-        SPE statistic for every observation.
-
-        '''       
+        tuple[list[float], np.ndarray]
+            A tuple containing:
+                - A list of SPE values for each observation.
+                - A NumPy array of residuals (differences between the original data and its reconstruction).
+        """
+        # Create a copy of the data to avoid modifying the original DataFrame.
         X_transform = data.copy()
-
-        # Descale and demean matrix
+    
+        # If standardization is enabled, apply preprocessing (scaling/demeaning) to the data.
         if self._standardize:
             X_transform = self.preprocess(data=X_transform)
-
+    
+        # Convert the DataFrame to a NumPy array for matrix operations.
         X_transform = X_transform.values
-
+    
+        # Project the original data onto the PCA subspace using the model's transformation method.
         predicted_scores = self.transform(data)
-
-        # SPE statistic
-        residuals = X_transform - predicted_scores.values @ self._loadings.values.T
-        SPE = np.sum(np.square(residuals), axis=1)
-
-        return SPE.tolist(), residuals
-
+    
+        # Reconstruct the data from the PCA scores by multiplying with the transpose of the loadings matrix.
+        reconstruction = predicted_scores.values @ self._loadings.values.T
+    
+        # Calculate the residuals: difference between original data and its reconstruction.
+        residuals = X_transform - reconstruction
+    
+        # Calculate the SPE for each observation as the sum of squared residuals.
+        SPE_values = np.sum(np.square(residuals), axis=1)
+    
+        return SPE_values.tolist(), residuals
+    
     @validate_dataframe('X_predict')
     @require_fitted
     def project(self, X_predict):
