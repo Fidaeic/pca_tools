@@ -459,3 +459,86 @@ def difference_plot(df_plot: pd.DataFrame) -> alt.Chart:
         y=alt.Y('value', title='Difference with respect to the mean (std)'),
         tooltip=['variable', 'value']
     ).interactive()
+
+import altair as alt
+import pandas as pd
+
+def contribution_plot(contributions_df: pd.DataFrame, value: float, obs_name: str, title_prefix: str) -> alt.Chart:
+    """
+    Generates an interactive bar plot visualizing each variable's contribution to a specific statistic for a specific observation.
+
+    This function creates a bar plot that breaks down the contribution of each variable to the overall value of a given observation. It is useful for identifying which variables contribute most to the observation's deviation from the model's predictions.
+
+    Parameters
+    ----------
+    contributions_df : pd.DataFrame
+        DataFrame containing the contributions of each variable.
+    value : float
+        The value of the statistic for the observation.
+    obs_name : str
+        The name or index of the observation being analyzed.
+    title_prefix : str
+        The prefix for the plot title, indicating the type of statistic (e.g., "SPE", "Hotelling's T2").
+
+    Returns
+    -------
+    alt.Chart
+        An Altair Chart object representing the interactive bar plot of variable contributions.
+    pd.DataFrame
+        The DataFrame containing the contributions of each variable.
+
+    Notes
+    -----
+    - The plot includes tooltips for each variable's contribution and displays the total value in the title.
+    """
+    return alt.Chart(contributions_df).mark_bar().encode(
+        x=alt.X('variable', title='Variable'),
+        y=alt.Y('contribution', title='Contribution'),
+        tooltip=['variable', 'contribution']
+    ).properties(
+        title=f'Contribution to the {title_prefix} for the observation: {str(obs_name)} - {title_prefix}: {value[0]:.2f}'
+    ).interactive(), contributions_df
+
+def spe_contribution_plot(contributions_df: pd.DataFrame, SPE: float, obs_name: str) -> alt.Chart:
+    """
+    Generates an interactive bar plot visualizing each variable's contribution to the Squared Prediction Error (SPE) for a specific observation.
+
+    Parameters
+    ----------
+    contributions_df : pd.DataFrame
+        DataFrame containing the contributions of each variable to the SPE.
+    SPE : float
+        The Squared Prediction Error (SPE) value for the observation.
+    obs_name : str
+        The name or index of the observation being analyzed.
+
+    Returns
+    -------
+    alt.Chart
+        An Altair Chart object representing the interactive bar plot of variable contributions to the SPE.
+    pd.DataFrame
+        The DataFrame containing the contributions of each variable to the SPE.
+    """
+    return contribution_plot(contributions_df, SPE, obs_name, "SPE")
+
+def hotelling_t2_contribution_plot(contributions_df: pd.DataFrame, hotelling: float, obs_name: str) -> alt.Chart:
+    """
+    Generates an interactive bar plot visualizing each variable's contribution to the Hotelling's T2 statistic for a specific observation.
+
+    Parameters
+    ----------
+    contributions_df : pd.DataFrame
+        DataFrame containing the contributions of each variable to the Hotelling's T2 statistic.
+    hotelling : float
+        The Hotelling's T2 value for the observation.
+    obs_name : str
+        The name or index of the observation being analyzed.
+
+    Returns
+    -------
+    alt.Chart
+        An Altair Chart object representing the interactive bar plot of variable contributions to the Hotelling's T2 statistic.
+    pd.DataFrame
+        The DataFrame containing the contributions of each variable to the Hotelling's T2 statistic.
+    """
+    return contribution_plot(contributions_df, hotelling, obs_name, "Hotelling's T2")

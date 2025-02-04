@@ -14,9 +14,8 @@ from sklearn.preprocessing import StandardScaler
 from .exceptions import NotDataFrameError, ModelNotFittedError, NotAListError, NotBoolError, NComponentsError
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.decomposition import PCA as PCA_sk
-from .functions import contribution_status
-from .plotting import score_plot, biplot, loadings_barplot, hotelling_t2_plot_p1, hotelling_t2_plot_p2, spe_plot_p1, spe_plot_p2, residuals_barplot
-from .utils import validate_dataframe, require_fitted, cache_result
+from .plotting import score_plot, biplot, loadings_barplot, hotelling_t2_plot_p1, hotelling_t2_plot_p2, spe_plot_p1, spe_plot_p2, residuals_barplot, spe_contribution_plot, hotelling_t2_contribution_plot
+from .decorators import validate_dataframe, require_fitted, cache_result
 from .preprocess import preprocess
 
 class PCA(BaseEstimator, TransformerMixin):
@@ -38,7 +37,6 @@ class PCA(BaseEstimator, TransformerMixin):
         
         if not isinstance(verbose, bool) or not isinstance(standardize, bool):
             raise NotBoolError()  
-
         
         self._standardize = standardize
         self._tolerance = tolerance
@@ -49,7 +47,6 @@ class PCA(BaseEstimator, TransformerMixin):
         self.model = PCA_sk(n_components=self._ncomps, svd_solver='full', tol=self._tolerance, iterated_power='auto')
 
         self._scaler = Pipeline([
-            # ('imputer', SimpleImputer(strategy='mean')),
             ('scaler', StandardScaler())
         ])
 
@@ -83,18 +80,20 @@ class PCA(BaseEstimator, TransformerMixin):
         if self._ncomps <= 0 or self._ncomps > data.shape[1]:
             raise NComponentsError(data.shape[1])
 
+    @validate_dataframe('data')
     def _initialize_attributes(self, data: pd.DataFrame):
         self._variables = data.columns
         self._index = data.index
         self._index_name = data.index.name
         self._nobs, self._nvars = data.shape
 
+    @validate_dataframe('data')
     def _preprocess_data(self, data: pd.DataFrame) -> np.ndarray:
         X = data.copy()
         if self._standardize:
             X = preprocess(data=X, scaler=self._scaler, numerical_features=self._numerical_features)
         return X.values
-
+    
     def _fit_model(self, X: np.ndarray):
         self.model.fit(X)
         self._loadings = pd.DataFrame(self.model.components_.T, columns=[f"PC_{i+1}" for i in range(self._ncomps)], index=self._variables)
@@ -381,7 +380,6 @@ class PCA(BaseEstimator, TransformerMixin):
         predicted_scores = self.transform(data)
 
         # SPE statistic
-
         residuals = X_transform - predicted_scores.values @ self._loadings.values.T
         SPE = np.sum(np.square(residuals), axis=1)
 
@@ -872,3 +870,60 @@ class PCA(BaseEstimator, TransformerMixin):
         residuals = pd.DataFrame({'variable': self._variables, 'residual': residuals[0]})
         # Altair plot for the residuals
         return residuals_barplot(residuals, SPE, data)
+    
+    @require_fitted
+    @validate_dataframe('observation')
+    def spe_contribution_plot(self, observation: pd.DataFrame):
+        """
+        Generates an interactive bar plot visualizing each variable's contribution to the Squared Prediction Error (SPE) for a specific observation.
+    
+        This method creates a bar plot that breaks down the contribution of each variable to the overall SPE of a given observation. It is useful for identifying which variables contribute most to the observation's deviation from the model's predictions.
+    
+        Parameters
+        ----------
+        observation : pd.DataFrame
+            The observation to analyze. Must be a single observation (1 row) in a pandas DataFrame format.
+    
+        Returns
+        -------
+        alt.Chart
+            An Altair Chart object representing the interactive bar plot of variable contributions to the SPE.
+        pd.DataFrame
+            The DataFrame containing the contributions of each variable to the SPE.
+    
+        Raises
+        ------
+        ValueError
+            If the number of features in `observation` does not match the number of variables in the model.
+            If `observation` contains more than one observation.
+    
+        Notes
+        -----
+        - The plot includes tooltips for each variable's contribution and displays the total SPE value in the title.
+        """
+        if observation.shape[1] != len(self._variables):
+            raise ValueError(f'Number of features in data must be {len(self._variables)}')
+    
+        if observation.shape[0] != 1:
+            raise ValueError(f'Number of observations in data must be 1')
+    
+        contributions_df, SPE = self.spe_contribution(observation)
+    
+        obs_name = observation.index.values[0]
+    
+        return spe_contribution_plot(contributions_df, SPE, obs_name)
+    
+    def hotelling_t2_contribution_plot(self, observation:pd.DataFrame):
+        
+
+        if observation.shape[1] != len(self._variables):
+            raise ValueError(f'Number of features in data must be {len(self._variables)}')
+        
+        if observation.shape[0] != 1:
+            raise ValueError(f'Number of observations in data must be 1')
+        
+        contributions_df, hotelling = self.t2_contribution(observation)
+        obs_name = observation.index.values[0]
+
+        # Altair plot for the residuals
+        return hotelling_t2_contribution_plot(contributions_df, hotelling, obs_name)
