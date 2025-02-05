@@ -551,7 +551,7 @@ class PCA(BaseEstimator, TransformerMixin):
         np.ndarray
             The indices of the high scores.
         """
-        return np.where(normalized_scores > 0.5)[1]
+        return np.where(normalized_scores > 0.3)[1]
     
     def _calculate_contributions(self, observation: pd.DataFrame, projected_scores: pd.DataFrame, high_scores: np.ndarray) -> pd.DataFrame:
         """
@@ -575,17 +575,16 @@ class PCA(BaseEstimator, TransformerMixin):
         truncated_scores = projected_scores.values[:, high_scores]
         truncated_eigenvals = self._eigenvals[high_scores]
         mean_diff = (observation - self._mean_train).values
-    
-        partial_contributions = ((truncated_scores / truncated_eigenvals) @ truncated_loadings.T) * mean_diff
-        partial_contributions = np.maximum(partial_contributions, 0)
-        contributions = partial_contributions.sum(axis=0)
-    
-        contributions_df = pd.DataFrame({'variable': self._variables, 'contribution': contributions})
-        contributions_df = contributions_df[contributions_df['contribution'] > 0]
-        total_contribution = contributions_df['contribution'].sum()
-        contributions_df['relative_contribution'] = contributions_df['contribution'] / total_contribution
-    
-        return contributions_df
+
+        print(len(high_scores))
+
+        # Calculate the contribution of each variable to the T2 statistic.
+        contributions = ((truncated_scores / truncated_eigenvals) @ truncated_loadings.T) * mean_diff
+
+        # Ensure contributions are non-negative. Negative contributions only make the score smaller
+        contributions = np.maximum(contributions, 0)
+
+        return pd.DataFrame({'variable': self._variables, 'contribution': contributions.mean(axis=0)})
     
     def spe_contribution(self, observation: pd.DataFrame) -> pd.DataFrame:
         """
@@ -651,6 +650,7 @@ class PCA(BaseEstimator, TransformerMixin):
         contributions_df.reset_index(drop=True, inplace=True)
     
         return contributions_df
+    
     def generate_data(self, num_samples: int = 1000) -> pd.DataFrame:
         """
         Generate synthetic data samples based on the PCA model.
