@@ -189,3 +189,4 @@ def column_wise_k_fold_pca_cv(data: pd.DataFrame,
         optimal_components = int(np.argmin(press_scores) + 1)
 
     return optimal_components, press_scores
+

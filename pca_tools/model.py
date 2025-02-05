@@ -488,6 +488,13 @@ class PCA(BaseEstimator, TransformerMixin):
         t2_contributions, _ = self.t2_contribution(X_predict)
         spe_contributions, _ = self.spe_contribution(X_predict)
 
+        if X_predict.shape[1]>1:
+            return {'anomaly_level_hotelling': hotelling,
+                    'control_limit_hotelling': self._hotelling_limit_p2,
+                    'anomaly_level_spe': SPE,
+                    'control_limit_spe': self._spe_limit,
+                    }
+
         # Merge the contributions of the variables to the T2 and SPE statistics
         t2_contributions = t2_contributions.set_index('variable')
         spe_contributions = spe_contributions.set_index('variable')
@@ -626,7 +633,43 @@ class PCA(BaseEstimator, TransformerMixin):
         total_contribution = contributions_df['contribution'].sum()
         contributions_df['relative_contribution'] = contributions_df['contribution'] / total_contribution
         return contributions_df.sort_values('contribution', ascending=False)
-
+    
+    def generate_data(self, num_samples: int = 1000) -> pd.DataFrame:
+        """
+        Generate synthetic data samples based on the PCA model.
+    
+        This method generates synthetic observations by sampling from the PCA subspace using a 
+        multivariate normal distribution. The means and standard deviations of the latent scores 
+        (obtained from the fitted PCA model) define the distribution. Under the assumption of independence 
+        (i.e. diagonal covariance), samples are drawn in the latent space and then transformed back to the 
+        original feature space using the inverse PCA transformation.
+    
+        Parameters
+        ----------
+        num_samples : int, optional
+            Number of synthetic samples to generate (default is 1000).
+    
+        Returns
+        -------
+        pd.DataFrame
+            A DataFrame containing the generated synthetic data in the original feature space.
+        """
+        # Define latent variable names (e.g., PC_1, PC_2, ..., PC_n)
+        pc_features = [f'PC_{i}' for i in range(1, self._ncomps + 1)]
+        
+        # Compute the mean and standard deviation of the PCA scores.
+        means = self._scores.mean()
+        stds = self._scores.std()
+    
+        # Construct a diagonal covariance matrix (i.e., assuming independent components).
+        covariance = np.diag(stds**2)
+    
+        # Sample from the multivariate normal in the PCA subspace.
+        latent_samples = np.random.multivariate_normal(means, covariance, size=num_samples)
+        latent_df = pd.DataFrame(latent_samples, columns=pc_features)
+    
+        # Transform the latent samples back into the original feature space.
+        return self.inverse_transform(latent_df)
 
     '''
     PLOTS
