@@ -394,7 +394,7 @@ def spe_plot_p2(spe: pd.DataFrame, alpha: float, spe_limit: float) -> alt.LayerC
     # Altair plot for the SPE statistic
     return (spe_chart + threshold)
 
-def residuals_barplot(residuals: pd.DataFrame, SPE: np.ndarray, data: pd.DataFrame) -> alt.Chart:
+def residuals_barplot(residuals: pd.DataFrame, SPE: np.ndarray, obs_name:str) -> alt.Chart:
     """
     Generates an interactive bar plot visualizing the residuals for a specific observation within the dataset.
 
@@ -427,7 +427,7 @@ def residuals_barplot(residuals: pd.DataFrame, SPE: np.ndarray, data: pd.DataFra
         y=alt.Y('residual', title='Residual'),
         tooltip=['variable', 'residual']
     ).properties(
-        title=f'Residuals for observation {str(data.index.values[0])} - SPE: {SPE[0]:.2f}'
+        title=f'Residuals for observation {str(obs_name)} - SPE: {SPE[0]:.2f}'
     ).interactive()
 
 def difference_plot(df_plot: pd.DataFrame) -> alt.Chart:

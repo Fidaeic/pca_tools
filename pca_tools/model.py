@@ -410,18 +410,8 @@ class PCA(BaseEstimator, TransformerMixin):
         # Create a copy of the data to avoid modifying the original DataFrame.
         X_transform = data.copy()
     
-        # If standardization is enabled, apply preprocessing (scaling/demeaning) to the data.
-        if self._standardize:
-            X_transform = self.preprocess(data=X_transform)
-    
-        # Convert the DataFrame to a NumPy array for matrix operations.
-        X_transform = X_transform.values
-    
-        # Project the original data onto the PCA subspace using the model's transformation method.
-        predicted_scores = self.transform(data)
-    
         # Reconstruct the data from the PCA scores by multiplying with the transpose of the loadings matrix.
-        reconstruction = predicted_scores.values @ self._loadings.values.T
+        reconstruction = self.inverse_transform(self.transform(data))
     
         # Calculate the residuals: difference between original data and its reconstruction.
         residuals = X_transform - reconstruction
@@ -617,23 +607,50 @@ class PCA(BaseEstimator, TransformerMixin):
     
     def _calculate_spe_contributions(self, residuals: np.ndarray) -> pd.DataFrame:
         """
-        Calculates the contributions of each variable to the SPE statistic.
-    
+        Calculate the contributions of each variable to the Squared Prediction Error (SPE) statistic.
+        
+        For each variable, its contribution is computed as the square of its residual value.
+        If residuals are provided for multiple observations (2D array), the contributions are summed
+        across all samples. The output DataFrame provides both the absolute and relative contributions
+        of each variable.
+        
         Parameters
         ----------
         residuals : np.ndarray
-            The residuals of the observation.
-    
+            Residuals from the original minus the reconstructed data. This can be a 1D array 
+            (for a single observation) or a 2D array of shape (n_samples, n_features) where contributions 
+            are aggregated across samples.
+        
         Returns
         -------
         pd.DataFrame
-            DataFrame containing the contributions of each variable to the SPE statistic.
+            DataFrame with columns:
+                - variable: Name of the variable.
+                - contribution: The absolute contribution to the SPE.
+                - relative_contribution: Fraction of the total SPE contributed by the variable.
         """
-        contributions_df = pd.DataFrame({'variable': self._variables, 'contribution': residuals[0]**2})
+        # Compute squared contributions.
+        # If residuals is 2D, sum across samples for each variable.
+        if residuals.ndim == 1:
+            squared_contributions = residuals ** 2
+        else:
+            squared_contributions = np.sum(residuals ** 2, axis=0)
+    
+        # Create a DataFrame for the contributions.
+        contributions_df = pd.DataFrame({
+            'variable': self._variables,
+            'contribution': squared_contributions
+        })
+    
+        # Compute relative contributions.
         total_contribution = contributions_df['contribution'].sum()
         contributions_df['relative_contribution'] = contributions_df['contribution'] / total_contribution
-        return contributions_df.sort_values('contribution', ascending=False)
     
+        # Sort variables by absolute contribution in descending order.
+        contributions_df.sort_values('contribution', ascending=False, inplace=True)
+        contributions_df.reset_index(drop=True, inplace=True)
+    
+        return contributions_df
     def generate_data(self, num_samples: int = 1000) -> pd.DataFrame:
         """
         Generate synthetic data samples based on the PCA model.
@@ -955,10 +972,13 @@ class PCA(BaseEstimator, TransformerMixin):
             raise ValueError(f'Number of observations in data must be 1')
         
         SPE, residuals = self.spe(data)
-        
-        residuals = pd.DataFrame({'variable': self._variables, 'residual': residuals[0]})
+
+        residuals = residuals.T.reset_index()
+        residuals.columns = ['variable', 'residual']
+        obs_name = data.index.values[0]
+    
         # Altair plot for the residuals
-        return residuals_barplot(residuals, SPE, data)
+        return residuals_barplot(residuals, SPE, obs_name)
     
     @require_fitted
     @validate_dataframe('observation')
