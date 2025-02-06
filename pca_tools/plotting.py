@@ -1,6 +1,7 @@
 import altair as alt
 import pandas as pd
 import numpy as np
+from typing import Union
 
 def score_plot(scores:pd.DataFrame, 
                comp1:int, 
@@ -203,121 +204,86 @@ def loadings_barplot(loadings: pd.DataFrame, explained_variance: np.ndarray, com
         tooltip=['variable', f'PC_{comp}']
     ).interactive()
 
-def hotelling_t2_plot(hotelling: np.ndarray, alpha: float, threshold: float, phase:str) -> alt.LayerChart:
-    '''
-    Generates an interactive plot visualizing the Hotelling's T2 statistic over observations.
+def generic_stat_plot(data: pd.DataFrame,
+                      stat_column: str,
+                      control_limit: float,
+                      alpha: float,
+                      phase: str,
+                      y_label: str = None) -> alt.LayerChart:
+    """
+    Generate an interactive Altair plot for a given statistic with a control threshold line.
+
+    This function creates an interactive line plot for the specified statistic over observations.
+    It includes a horizontal dashed line representing the control limit and a title that annotates the
+    significance level (alpha) and threshold value. The input data can be a pandas DataFrame or a NumPy array.
+    If a NumPy array is provided, it is assumed to represent statistic values with the observation index generated automatically.
 
     Parameters
     ----------
-    hotelling : np.ndarray
-        Array containing the Hotelling's T2 statistics for each observation.
+    data : pd.DataFrame or np.ndarray
+        Data containing the statistic values. If a DataFrame is provided, it is expected to have a column
+        corresponding to the statistic. If a NumPy array is provided, the array is considered as the statistic values.
+    stat_column : str
+        The name of the column representing the statistic (e.g., 'T2', 'SPE', 'DModX').
+    control_limit : float
+        The control threshold for the statistic.
     alpha : float
-        The significance level used to calculate the control limits.
-    threshold : float
-        The threshold value for the Hotelling's T2 statistic.
+        The significance level used to compute the control limits.
+    phase : str
+        Label indicating the phase (e.g., "Phase I" or "Phase II").
+    y_label : str, optional
+        Label for the y-axis. Defaults to the value of stat_column if not provided.
 
     Returns
     -------
     alt.LayerChart
-        An Altair LayerChart object that combines the line plot of Hotelling's T2 statistics with the threshold rule.
-    '''
-    hotelling_df = pd.DataFrame({'observation': range(len(hotelling)), 'T2': hotelling})
-
-    hotelling_chart = alt.Chart(hotelling_df).mark_line().encode(
-        x=alt.X('observation', title='Observation'),
-        y=alt.Y('T2', title="Hotelling's T2"),
-        tooltip=['observation', "T2"],
-    ).properties(
-        title=f'Hotelling\'s T2 statistic plot ({phase}) \n alpha: {alpha*100}% -- Threshold: {threshold:.2f}',
-    ).interactive()
-
-    hotelling_chart.configure_title(
-        fontSize=20,
-        font='Courier',
-        anchor='start',
-        color='gray'
-    )
-
-    threshold_line = alt.Chart(
-        pd.DataFrame({'y': [threshold]})).mark_rule(
-        strokeDash=[12, 6], color='red').encode(y='y')
-
-    # Altair plot for the Hotelling's T2 statistic
-    return (hotelling_chart + threshold_line)
-
-def spe_plot(spe: np.ndarray, alpha: float, spe_limit: float, phase:str) -> alt.LayerChart:
+        An Altair LayerChart object that overlays the statistic line plot with a horizontal threshold rule.
     """
-    Generates an interactive plot visualizing the Squared Prediction Error (SPE) statistic for Phase I observations.
+    # Ensure the input data is a DataFrame.
+    df = data.copy()
+    if 'observation' not in df.columns:
+        df['observation'] = range(len(df))
+    
+    if y_label is None:
+        y_label = stat_column
 
-    This function creates an interactive line plot of the SPE statistic for each observation in the dataset. 
-    The plot includes a horizontal dashed line indicating the threshold value beyond which an observation is considered an outlier.
+    # Format the plot title.
+    title = f"{stat_column} plot ({phase}) \n alpha: {alpha * 100}% -- Threshold: {control_limit:.2f}"
 
-    Parameters
-    ----------
-    spe : np.ndarray
-        Array containing the SPE statistics for each observation.
-    alpha : float
-        The significance level used to calculate the control limits.
-    spe_limit : float
-        The threshold value for the SPE statistic.
-
-    Returns
-    -------
-    alt.LayerChart
-        An Altair LayerChart object that combines the line plot of SPE statistics with the threshold rule.
-
-    Notes
-    -----
-    - The plot is interactive, allowing for zooming and panning to explore the data points in detail.
-    - Observations and their corresponding SPE values are displayed as tooltips when hovering over the plot.
-    """
-
-    spe_chart = alt.Chart(spe).mark_line().encode(
+    # Create the main line chart (without any individual config).
+    stat_chart = alt.Chart(df).mark_line().encode(
         x=alt.X('observation', title='Observation'),
-        y=alt.Y('SPE', title='SPE'),
-        tooltip=['observation', "SPE"],
+        y=alt.Y(f'{stat_column}', title=y_label),
+        tooltip=[alt.Tooltip('observation', title='Observation'),
+                 alt.Tooltip(f'{stat_column}', title=stat_column)]
     ).properties(
-        title=f'SPE statistic plot ({phase}) \n alpha: {alpha*100}% -- Threshold: {spe_limit:.2f}',
+        title=title
     ).interactive()
 
-    spe_chart.configure_title(
+    stat_chart.configure_title(
         fontSize=20,
         font='Courier',
         anchor='start',
         color='gray'
     )
 
-    threshold = alt.Chart(
-                    pd.DataFrame({'y': [spe_limit]})).mark_rule(
-                    strokeDash=[12, 6], color='red').encode(y='y')
-
-    # Altair plot for the SPE statistic
-    return (spe_chart + threshold)
-
-def dmodx_plot(dmodx: pd.DataFrame, alpha: float, dmodx_limit: float, phase:str) -> alt.LayerChart:
-
-    dmodx_chart = alt.Chart(dmodx).mark_line().encode(
-        x=alt.X('observation', title='Observation'),
-        y=alt.Y('DModX', title='DModX'),
-        tooltip=['observation', "DModX"],
-    ).properties(
-        title=f'DModX statistic plot ({phase}) \n alpha: {alpha*100}% -- Threshold: {dmodx_limit:.2f}',
-    ).interactive()
-
-    dmodx_chart.configure_title(
-        fontSize=20,
-        font='Courier',
-        anchor='start',
-        color='gray'
+    # Create the threshold rule.
+    threshold_line = alt.Chart(pd.DataFrame({'y': [control_limit]})).mark_rule(
+        strokeDash=[12, 6],
+        color='red'
+    ).encode(
+        y=alt.Y('y:Q')
     )
 
-    threshold = alt.Chart(
-                    pd.DataFrame({'y': [dmodx_limit]})).mark_rule(
-                    strokeDash=[12, 6], color='red').encode(y='y')
+    # # Combine the charts using alt.layer and define the title configuration for the layered chart.
+    # layered_chart = alt.layer(stat_chart, threshold_line).configure_title(
+    #     fontSize=20,
+    #     font='Courier',
+    #     anchor='start',
+    #     color='gray'
+    # )
 
-    # Altair plot for the SPE statistic
-    return (dmodx_chart + threshold)
-
+    return (stat_chart + threshold_line)
 
 
 def residuals_barplot(residuals: pd.DataFrame, SPE: np.ndarray, obs_name:str) -> alt.Chart:

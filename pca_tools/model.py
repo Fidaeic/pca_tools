@@ -14,7 +14,7 @@ from sklearn.preprocessing import StandardScaler
 from .exceptions import NotDataFrameError, ModelNotFittedError, NotAListError, NotBoolError, NComponentsError
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.decomposition import PCA as PCA_sk
-from .plotting import score_plot, biplot, loadings_barplot, hotelling_t2_plot, spe_plot, residuals_barplot, spe_contribution_plot, hotelling_t2_contribution_plot, actual_vs_predicted, dmodx_contribution_plot, dmodx_plot
+from .plotting import score_plot, biplot, loadings_barplot, hotelling_t2_plot, spe_plot, residuals_barplot, spe_contribution_plot, hotelling_t2_contribution_plot, actual_vs_predicted, dmodx_contribution_plot, dmodx_plot, generic_stat_plot
 from .decorators import validate_dataframe, require_fitted, cache_result
 from .preprocess import preprocess
 
@@ -1005,9 +1005,14 @@ class PCA(BaseEstimator, TransformerMixin):
         -----
         - The method assumes that the Hotelling's T2 statistics (`self._hotelling`) and the threshold (`self._hotelling_limit_p1`) have been previously calculated and are stored as attributes of the class.
         - The plot is interactive, allowing for zooming and panning to explore the data points in detail.
-        '''
-        phase = 'Phase I'
-        return hotelling_t2_plot(self._hotelling, self._alpha, self._hotelling_limit_p1, phase)
+        '''      
+        hotelling_df = pd.DataFrame({'observation': range(self._nobs), 'T2': self._hotelling})
+
+        return generic_stat_plot(data=hotelling_df, 
+                                 stat_column="T2",
+                                 control_limit=self._hotelling_limit_p1,
+                                 phase="Phase I",
+                                 alpha=self._alpha)
     
     @require_fitted
     @validate_dataframe('test_set')
@@ -1039,10 +1044,14 @@ class PCA(BaseEstimator, TransformerMixin):
         - The method assumes the PCA model has been fitted and the threshold (`self._hotelling_limit_p2`) has been set.
         - The plot's title includes the significance level (alpha) and the threshold value, providing context for the analysis.
         '''
-        phase = 'Phase II'
         hotelling = self.hotelling_t2(test_set)
+        hotelling_df = pd.DataFrame({'observation': range(self._nobs), 'T2': hotelling})
 
-        return hotelling_t2_plot(hotelling, self._alpha, self._hotelling_limit_p2, phase)
+        return generic_stat_plot(data=hotelling_df, 
+                                 stat_column="T2",
+                                 control_limit=self._hotelling_limit_p2,
+                                 phase="Phase II",
+                                 alpha=self._alpha)
     
     @require_fitted
     def spe_plot_p1(self):
@@ -1067,10 +1076,13 @@ class PCA(BaseEstimator, TransformerMixin):
         - The method assumes that the SPE statistics (`self._spe`) and the threshold (`self._spe_limit`) have been previously calculated and are stored as attributes of the class.
         - The plot's title includes the significance level (alpha) and the threshold value, providing context for the analysis.
         '''
-        phase = 'Phase I'
         spe_df = pd.DataFrame({'observation': range(self._nobs), 'SPE': self._spe})
 
-        return spe_plot(spe_df, self._alpha, self._spe_limit, phase)
+        return generic_stat_plot(data=spe_df, 
+                                 stat_column="SPE",
+                                 control_limit=self._spe_limit,
+                                 phase="Phase I",
+                                 alpha=self._alpha)
     
     @require_fitted
     @validate_dataframe('test_set')
@@ -1106,9 +1118,13 @@ class PCA(BaseEstimator, TransformerMixin):
         SPE, _ = self.spe(test_set)
 
         nobs = len(SPE)
-        spe = pd.DataFrame({'observation': range(nobs), 'SPE': SPE})
+        spe_df = pd.DataFrame({'observation': range(nobs), 'SPE': SPE})
 
-        return spe_plot(spe, self._alpha, self._spe_limit, phase)
+        return generic_stat_plot(data=spe_df, 
+                                 stat_column="SPE",
+                                 control_limit=self._spe_limit,
+                                 phase="Phase II",
+                                 alpha=self._alpha)
     
     @require_fitted
     def dmodx_plot_p1(self) -> alt.Chart:
@@ -1124,15 +1140,16 @@ class PCA(BaseEstimator, TransformerMixin):
         -------
         alt.Chart
             An interactive Altair chart displaying DModX values for each observation and the DModX control limit line.
-        """
-        # Define analysis phase label.
-        phase = 'Phase I'
-        
+        """      
         # Create a DataFrame containing observation indices and their corresponding DModX values.
         dmodx_df = pd.DataFrame({'observation': range(self._nobs), 'DModX': self._dmodx})
         
         # Create and return the interactive Altair plot using the dedicated plotting function.
-        return dmodx_plot(dmodx_df, self._alpha, self._dmodx_limit, phase)
+        return generic_stat_plot(data=dmodx_df, 
+                                 stat_column="DModX",
+                                 control_limit=self._dmodx_limit,
+                                 phase="Phase I",
+                                 alpha=self._alpha)
     
     @validate_dataframe('test_set')
     @require_fitted
@@ -1157,8 +1174,6 @@ class PCA(BaseEstimator, TransformerMixin):
             An interactive Altair chart displaying DModX values for each test observation and the corresponding DModX 
             control limit line.
         """
-        phase = 'Phase II'
-    
         # Compute DModX for the test set.
         dmodx = self.dmodx(test_set)
         
@@ -1166,7 +1181,11 @@ class PCA(BaseEstimator, TransformerMixin):
         dmodx_df = pd.DataFrame({'observation': range(len(dmodx)), 'DModX': dmodx})
         
         # Generate and return the Altair plot using the dedicated plotting function.
-        return dmodx_plot(dmodx_df, self._alpha, self._dmodx_limit, phase)
+        return generic_stat_plot(data=dmodx_df, 
+                                 stat_column="DModX",
+                                 control_limit=self._dmodx_limit,
+                                 phase="Phase II",
+                                 alpha=self._alpha)
 
 
     @validate_dataframe('data')
