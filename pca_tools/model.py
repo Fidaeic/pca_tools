@@ -14,7 +14,7 @@ from sklearn.preprocessing import StandardScaler
 from .exceptions import NotDataFrameError, ModelNotFittedError, NotAListError, NotBoolError, NComponentsError
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.decomposition import PCA as PCA_sk
-from .plotting import score_plot, biplot, loadings_barplot, hotelling_t2_plot_p1, hotelling_t2_plot_p2, spe_plot_p1, spe_plot_p2, residuals_barplot, spe_contribution_plot, hotelling_t2_contribution_plot, actual_vs_predicted
+from .plotting import score_plot, biplot, loadings_barplot, hotelling_t2_plot, spe_plot, residuals_barplot, spe_contribution_plot, hotelling_t2_contribution_plot, actual_vs_predicted, dmodx_contribution_plot, dmodx_plot
 from .decorators import validate_dataframe, require_fitted, cache_result
 from .preprocess import preprocess
 
@@ -141,8 +141,9 @@ class PCA(BaseEstimator, TransformerMixin):
     
         self._spe, _ = self.spe(data)
         self._hotelling = self.hotelling_t2(data)
+        self._dmodx = self.dmodx(data)
     
-        self._hotelling_limit_p1, self._hotelling_limit_p2, self._spe_limit = self.control_limits(alpha=self._alpha)
+        self._hotelling_limit_p1, self._hotelling_limit_p2, self._spe_limit, self._dmodx_limit = self.control_limits(alpha=self._alpha)
         
         return self
 
@@ -316,7 +317,7 @@ class PCA(BaseEstimator, TransformerMixin):
     @require_fitted
     def control_limits(self, alpha: float = 0.95) -> tuple[float, float, float]:
         """
-        Calculates the control limits for Hotelling's T2 and SPE (Squared Prediction Error) statistics.
+        Calculates the control limits for Hotelling's T2, SPE (Squared Prediction Error), and DModX statistics.
     
         This method computes the control limits for both Hotelling's T2 and SPE statistics for a PCA model.
         Two phases of control limits are computed:
@@ -339,11 +340,14 @@ class PCA(BaseEstimator, TransformerMixin):
                     Control limit for Hotelling's T2 in Phase II.
                 - spe_limit : float
                     Control limit for the SPE statistic.
+                - dmodx_limit : float
+                    Control limit for the DMODX statistic.
     
         Notes
         -----
         - Hotelling's T2 is a multivariate analogue of the univariate t-square statistic.
         - SPE measures the squared prediction error from the PCA model.
+        - DModX is a measure of the absolute distance to the model
         - Limits are derived from the beta, F-, and chi-squared distributions, adjusted for sample size and number of components.
         """
         # Phase I: Hotelling's T2 control limit
@@ -366,8 +370,20 @@ class PCA(BaseEstimator, TransformerMixin):
         df_spe = (2 * mean_spe ** 2) / var_spe if var_spe != 0 else 1  # safeguard against division by zero
         constant_spe = var_spe / (2 * mean_spe) if mean_spe != 0 else 1
         spe_limit = chi2.ppf(alpha, df_spe) * constant_spe
+
+        # DMODX control limit
+        m = self._nobs
+        K = self._nvars
+        A = self._ncomps
+
+        # Pooled residual standard deviation
+        s_0 = np.sqrt(np.sum(self._residuals_fit.values**2)/((m-A-1)*(K-A)))
+
+        dfn = K-A
+        dfd = (m-A-1)*(K-A)
+        dmodx_limit = s_0*np.sqrt(f.ppf(alpha, dfn, dfd))
     
-        return hotelling_limit_p1, hotelling_limit_p2, spe_limit
+        return hotelling_limit_p1, hotelling_limit_p2, spe_limit, dmodx_limit
     
     @validate_dataframe('data')
     @require_fitted
@@ -627,6 +643,38 @@ class PCA(BaseEstimator, TransformerMixin):
         contributions_df = self._calculate_spe_contributions(residuals)
         return contributions_df, SPE
     
+    def dmodx_contribution(self, observation: pd.DataFrame) -> pd.DataFrame:
+        """
+        Calculate the contributions of each variable to the DmodX statistic for a given observation.
+    
+        This method computes the contribution of each variable to the DmodX (Distance to Model in X-space) by:
+          1. Transforming the observation via PCA and reconstructing it.
+          2. Calculating the residuals between the actual observation and its reconstruction.
+          3. Computing DmodX for the observation.
+          4. Determining the contributions of each variable from the residuals using an internal helper function.
+    
+        Parameters
+        ----------
+        observation : pd.DataFrame
+            A pandas DataFrame representing a single observation. The DataFrame should have the same 
+            features as those used to fit the PCA model.
+    
+        Returns
+        -------
+        tuple[pd.DataFrame, float]
+            A tuple where the first element is a DataFrame containing the contributions of each variable 
+            to the DmodX statistic, and the second element is the computed DmodX value for the observation.
+        """
+        reconstructed = self.inverse_transform(self.transform(observation))
+        residuals = observation - reconstructed
+    
+        dmodx = self.dmodx(observation)
+    
+        contributions_df = self._calculate_dmodx_contributions(residuals)
+    
+        return contributions_df, dmodx
+
+    
     def _calculate_spe_contributions(self, residuals: np.ndarray) -> pd.DataFrame:
         """
         Calculate the contributions of each variable to the Squared Prediction Error (SPE) statistic.
@@ -662,6 +710,55 @@ class PCA(BaseEstimator, TransformerMixin):
         contributions_df = pd.DataFrame({
             'variable': self._variables,
             'contribution': squared_contributions
+        })
+    
+        # Compute relative contributions.
+        total_contribution = contributions_df['contribution'].sum()
+        contributions_df['relative_contribution'] = contributions_df['contribution'] / total_contribution
+    
+        # Sort variables by absolute contribution in descending order.
+        contributions_df.sort_values('contribution', ascending=False, inplace=True)
+        contributions_df.reset_index(drop=True, inplace=True)
+    
+        return contributions_df
+    
+    def _calculate_dmodx_contributions(self, residuals: np.ndarray) -> pd.DataFrame:
+        """
+        Calculate the contributions of each variable to the DmodX (Distance to Model in X-space) statistic.
+    
+        This method computes the contribution of each variable to the overall model deviation by:
+          1. Computing the sum of squares of the residuals from the training fit.
+          2. Calculating a weight (w_k) as the square root of the explained sum of squares.
+          3. Multiplying the weight with the residuals of the observation.
+          4. Forming a DataFrame that contains each variable's absolute and relative contribution.
+          5. Sorting the contributions in descending order by absolute contribution.
+    
+        Parameters
+        ----------
+        residuals : np.ndarray
+            An array of residuals for the observation(s). Typically, this is obtained by subtracting the 
+            reconstructed observation from the original observation.
+    
+        Returns
+        -------
+        pd.DataFrame
+            A DataFrame with columns:
+                - 'variable': The name of each variable.
+                - 'contribution': The absolute contribution of the variable to the DmodX.
+                - 'relative_contribution': The fraction of the total DmodX contributed by the variable.
+        """
+        # Calculate the sum of squares of the residuals from the training fit.
+        explained_sum_squares = np.sum((self._residuals_fit.values) ** 2)
+        # Compute weight as the square root of the explained sum of squares.
+        w_k = np.sqrt(explained_sum_squares)
+    
+        # Multiply the weight with the residuals; assume residuals is a 2D array and take the first row.
+        contribution = w_k * residuals.values
+    
+        # Create a DataFrame for absolute contributions.
+        contributions_df = pd.DataFrame({
+            'variable': self._variables,
+            'contribution': contribution[0]
         })
     
         # Compute relative contributions.
@@ -710,6 +807,61 @@ class PCA(BaseEstimator, TransformerMixin):
     
         # Transform the latent samples back into the original feature space.
         return self.inverse_transform(latent_df)
+    
+    def dmodx(self, data: pd.DataFrame, normalize: bool = True) -> np.ndarray:
+        """
+        Calculate the DModX statistic for each observation in the dataset.
+    
+        DModX (Distance to Model in X-space) quantifies the distance of an observation from 
+        the PCA model's fitted subspace (i.e., the reconstruction error), thereby indicating 
+        its leverage or potential influence on the model. Higher DModX values suggest that 
+        an observation deviates more significantly from the PCA model and may be considered an outlier.
+        
+        The computation is based on the Squared Prediction Error (SPE) scaled by the degrees 
+        of freedom available (number of variables minus number of principal components). Optionally, 
+        the DModX values can be normalized by an estimate of the residual standard deviation.
+    
+        Parameters
+        ----------
+        data : pd.DataFrame
+            The input data for which the DModX statistic will be calculated. Each row should represent 
+            one observation with the same variables used to fit the PCA model.
+        normalize : bool, optional
+            If True, the computed DModX values are normalized by the estimated residual standard deviation.
+            The default is True.
+    
+        Returns
+        -------
+        np.ndarray
+            A one-dimensional NumPy array containing the DModX values for each observation in the input data.
+    
+        Notes
+        -----
+        Let:
+            m = number of observations,
+            A = number of principal components,
+            K = number of variables.
+        Then:
+            DModX = sqrt( SPE / (K - A) )
+        where SPE is the Squared Prediction Error for each observation.
+        If normalization is enabled, DModX is further divided by:
+            s₀ = sqrt( Sum_{i,j}(residuals^2) / ((m - A - 1) * (K - A)) )
+        """
+        
+        # Calculate the Squared Prediction Error (SPE) and obtain the residuals.
+        SPE, residuals = self.spe(data)
+    
+        m = self._nobs
+        A = self._ncomps
+        K = self._nvars
+    
+        dmodx_values = np.sqrt(np.array(SPE) / (K - A))
+    
+        if normalize:
+            s_0 = np.sqrt(np.sum(residuals.values**2) / ((m - A - 1) * (K - A)))
+            dmodx_values = dmodx_values / s_0
+    
+        return dmodx_values
 
     '''
     PLOTS
@@ -854,7 +1006,8 @@ class PCA(BaseEstimator, TransformerMixin):
         - The method assumes that the Hotelling's T2 statistics (`self._hotelling`) and the threshold (`self._hotelling_limit_p1`) have been previously calculated and are stored as attributes of the class.
         - The plot is interactive, allowing for zooming and panning to explore the data points in detail.
         '''
-        return hotelling_t2_plot_p1(self._hotelling, self._alpha, self._hotelling_limit_p1)
+        phase = 'Phase I'
+        return hotelling_t2_plot(self._hotelling, self._alpha, self._hotelling_limit_p1, phase)
     
     @require_fitted
     @validate_dataframe('test_set')
@@ -886,9 +1039,10 @@ class PCA(BaseEstimator, TransformerMixin):
         - The method assumes the PCA model has been fitted and the threshold (`self._hotelling_limit_p2`) has been set.
         - The plot's title includes the significance level (alpha) and the threshold value, providing context for the analysis.
         '''
+        phase = 'Phase II'
         hotelling = self.hotelling_t2(test_set)
 
-        return hotelling_t2_plot_p2(hotelling, self._alpha, self._hotelling_limit_p2)
+        return hotelling_t2_plot(hotelling, self._alpha, self._hotelling_limit_p2, phase)
     
     @require_fitted
     def spe_plot_p1(self):
@@ -912,10 +1066,11 @@ class PCA(BaseEstimator, TransformerMixin):
         -----
         - The method assumes that the SPE statistics (`self._spe`) and the threshold (`self._spe_limit`) have been previously calculated and are stored as attributes of the class.
         - The plot's title includes the significance level (alpha) and the threshold value, providing context for the analysis.
-        '''        
+        '''
+        phase = 'Phase I'
         spe_df = pd.DataFrame({'observation': range(self._nobs), 'SPE': self._spe})
 
-        return spe_plot_p1(spe_df, self._alpha, self._spe_limit)
+        return spe_plot(spe_df, self._alpha, self._spe_limit, phase)
     
     @require_fitted
     @validate_dataframe('test_set')
@@ -947,12 +1102,72 @@ class PCA(BaseEstimator, TransformerMixin):
         - The method assumes that the SPE statistics and the threshold (`self._spe_limit`) have been previously calculated and are stored as attributes of the class.
         - The plot's title includes the significance level (alpha) and the threshold value, providing context for the analysis.
         '''
+        phase = 'Phase II'
         SPE, _ = self.spe(test_set)
 
         nobs = len(SPE)
         spe = pd.DataFrame({'observation': range(nobs), 'SPE': SPE})
 
-        return spe_plot_p2(spe, self._alpha, self._spe_limit)
+        return spe_plot(spe, self._alpha, self._spe_limit, phase)
+    
+    @require_fitted
+    def dmodx_plot_p1(self) -> alt.Chart:
+        """
+        Generate an interactive plot for DModX (Distance to Model in X-space) statistics for Phase I.
+    
+        Phase I corresponds to the training phase, where the PCA model's performance is assessed via DModX.
+        This method creates an interactive Altair plot that visualizes the DModX values for each training observation,
+        along with a control limit line. The control limit is computed based on the pre-configured significance level (alpha)
+        and serves as a threshold for identifying potential model deviations or outliers.
+    
+        Returns
+        -------
+        alt.Chart
+            An interactive Altair chart displaying DModX values for each observation and the DModX control limit line.
+        """
+        # Define analysis phase label.
+        phase = 'Phase I'
+        
+        # Create a DataFrame containing observation indices and their corresponding DModX values.
+        dmodx_df = pd.DataFrame({'observation': range(self._nobs), 'DModX': self._dmodx})
+        
+        # Create and return the interactive Altair plot using the dedicated plotting function.
+        return dmodx_plot(dmodx_df, self._alpha, self._dmodx_limit, phase)
+    
+    @validate_dataframe('test_set')
+    @require_fitted
+    def dmodx_plot_p2(self, test_set: pd.DataFrame) -> alt.Chart:
+        """
+        Generate an interactive Altair plot for DModX (Distance to Model in X-space) statistics for Phase II (test set).
+    
+        Phase II corresponds to the evaluation phase where the PCA model is applied to new, unseen data.
+        This method calculates the DModX values for each observation in the test set and visualizes them along with
+        a control limit line. The control limit, determined during model training, acts as a threshold to flag potential 
+        outliers or observations that deviate significantly from the model.
+    
+        Parameters
+        ----------
+        test_set : pd.DataFrame
+            A DataFrame containing the test data. Each row should represent one observation with the same features 
+            as those used to fit the PCA model.
+    
+        Returns
+        -------
+        alt.Chart
+            An interactive Altair chart displaying DModX values for each test observation and the corresponding DModX 
+            control limit line.
+        """
+        phase = 'Phase II'
+    
+        # Compute DModX for the test set.
+        dmodx = self.dmodx(test_set)
+        
+        # Use the length of the computed dmodx array to create observation indices.
+        dmodx_df = pd.DataFrame({'observation': range(len(dmodx)), 'DModX': dmodx})
+        
+        # Generate and return the Altair plot using the dedicated plotting function.
+        return dmodx_plot(dmodx_df, self._alpha, self._dmodx_limit, phase)
+
 
     @validate_dataframe('data')
     @require_fitted
@@ -1087,6 +1302,14 @@ class PCA(BaseEstimator, TransformerMixin):
     
         # Generate and return the Altair plot for Hotelling's T² contributions.
         return hotelling_t2_contribution_plot(contributions_df, hotelling, obs_name)
+    
+    def dmodx_contribution_plot(self, observation: pd.DataFrame) -> alt.Chart:
+
+        contributions_df, dmodx = self.dmodx_contribution(observation)
+
+        obs_name = observation.index.values[0]
+
+        return dmodx_contribution_plot(contributions_df, dmodx, obs_name)
     
     def actual_vs_predicted(self, observation: pd.DataFrame) -> alt.Chart:
         """

@@ -203,7 +203,7 @@ def loadings_barplot(loadings: pd.DataFrame, explained_variance: np.ndarray, com
         tooltip=['variable', f'PC_{comp}']
     ).interactive()
 
-def hotelling_t2_plot_p1(hotelling: np.ndarray, alpha: float, threshold: float):
+def hotelling_t2_plot(hotelling: np.ndarray, alpha: float, threshold: float, phase:str) -> alt.LayerChart:
     '''
     Generates an interactive plot visualizing the Hotelling's T2 statistic over observations.
 
@@ -228,7 +228,7 @@ def hotelling_t2_plot_p1(hotelling: np.ndarray, alpha: float, threshold: float):
         y=alt.Y('T2', title="Hotelling's T2"),
         tooltip=['observation', "T2"],
     ).properties(
-        title=f'Hotelling\'s T2 statistic plot (Phase I) \n alpha: {alpha*100}% -- Threshold: {threshold:.2f}',
+        title=f'Hotelling\'s T2 statistic plot ({phase}) \n alpha: {alpha*100}% -- Threshold: {threshold:.2f}',
     ).interactive()
 
     hotelling_chart.configure_title(
@@ -245,59 +245,7 @@ def hotelling_t2_plot_p1(hotelling: np.ndarray, alpha: float, threshold: float):
     # Altair plot for the Hotelling's T2 statistic
     return (hotelling_chart + threshold_line)
 
-def hotelling_t2_plot_p2(hotelling: np.ndarray, alpha: float, hotelling_limit_p2: float) -> alt.LayerChart:
-    """
-    Generates an interactive plot of the Hotelling's T2 statistic for Phase II observations.
-
-    This function visualizes the Hotelling's T2 statistic for a given set of observations, aiding in the identification of outliers. 
-    It creates an interactive line plot with a threshold line indicating the outlier cutoff.
-
-    Parameters
-    ----------
-    hotelling : np.ndarray
-        Array containing the Hotelling's T2 statistics for each observation.
-    alpha : float
-        The significance level used to calculate the control limits.
-    hotelling_limit_p2 : float
-        The threshold value for the Hotelling's T2 statistic in Phase II.
-
-    Returns
-    -------
-    alt.LayerChart
-        An Altair LayerChart object that combines the line plot of Hotelling's T2 statistics with the threshold rule.
-
-    Notes
-    -----
-    - The plot is interactive, allowing for zooming and panning to explore the data points in detail.
-    - Observations and their corresponding T2 values are displayed as tooltips when hovering over the plot.
-    """
-    n_obs = len(hotelling)
-
-    hotelling_df = pd.DataFrame({'observation': range(n_obs), 'T2': hotelling})
-
-    hotelling_chart = alt.Chart(hotelling_df).mark_line().encode(
-        x=alt.X('observation', title='Observation'),
-        y=alt.Y('T2', title="Hotelling's T2"),
-        tooltip=['observation', "T2"],
-    ).properties(
-        title=f'Hotelling\'s T2 statistic plot (Phase II) \n alpha: {alpha*100}% -- Threshold: {hotelling_limit_p2:.2f}',
-    ).interactive()
-
-    hotelling_chart.configure_title(
-        fontSize=20,
-        font='Courier',
-        anchor='start',
-        color='gray'
-    )
-
-    threshold = alt.Chart(
-                    pd.DataFrame({'y': [hotelling_limit_p2]})).mark_rule(
-                    strokeDash=[12, 6], color='red').encode(y='y')
-
-    # Altair plot for the Hotelling's T2 statistic
-    return (hotelling_chart + threshold)
-
-def spe_plot_p1(spe: np.ndarray, alpha: float, spe_limit: float) -> alt.LayerChart:
+def spe_plot(spe: np.ndarray, alpha: float, spe_limit: float, phase:str) -> alt.LayerChart:
     """
     Generates an interactive plot visualizing the Squared Prediction Error (SPE) statistic for Phase I observations.
 
@@ -329,7 +277,7 @@ def spe_plot_p1(spe: np.ndarray, alpha: float, spe_limit: float) -> alt.LayerCha
         y=alt.Y('SPE', title='SPE'),
         tooltip=['observation', "SPE"],
     ).properties(
-        title=f'SPE statistic plot (Phase I) \n alpha: {alpha*100}% -- Threshold: {spe_limit:.2f}',
+        title=f'SPE statistic plot ({phase}) \n alpha: {alpha*100}% -- Threshold: {spe_limit:.2f}',
     ).interactive()
 
     spe_chart.configure_title(
@@ -346,41 +294,17 @@ def spe_plot_p1(spe: np.ndarray, alpha: float, spe_limit: float) -> alt.LayerCha
     # Altair plot for the SPE statistic
     return (spe_chart + threshold)
 
-def spe_plot_p2(spe: pd.DataFrame, alpha: float, spe_limit: float) -> alt.LayerChart:
-    """
-    Generates an interactive plot visualizing the Squared Prediction Error (SPE) statistic for Phase II observations.
+def dmodx_plot(dmodx: pd.DataFrame, alpha: float, dmodx_limit: float, phase:str) -> alt.LayerChart:
 
-    This function creates an interactive line plot of the SPE statistic for each observation in the dataset. 
-    The plot includes a horizontal dashed line indicating the threshold value beyond which an observation is considered an outlier.
-
-    Parameters
-    ----------
-    spe : pd.DataFrame
-        DataFrame containing the SPE statistics for each observation. It should have columns 'observation' and 'SPE'.
-    alpha : float
-        The significance level used to calculate the control limits.
-    spe_limit : float
-        The threshold value for the SPE statistic.
-
-    Returns
-    -------
-    alt.LayerChart
-        An Altair LayerChart object that combines the line plot of SPE statistics with the threshold rule.
-
-    Notes
-    -----
-    - The plot is interactive, allowing for zooming and panning to explore the data points in detail.
-    - Observations and their corresponding SPE values are displayed as tooltips when hovering over the plot.
-    """
-    spe_chart = alt.Chart(spe).mark_line().encode(
+    dmodx_chart = alt.Chart(dmodx).mark_line().encode(
         x=alt.X('observation', title='Observation'),
-        y=alt.Y('SPE', title='SPE'),
-        tooltip=['observation', "SPE"],
+        y=alt.Y('DModX', title='DModX'),
+        tooltip=['observation', "DModX"],
     ).properties(
-        title=f'SPE statistic plot (Phase II) \n alpha: {alpha*100}% -- Threshold: {spe_limit:.2f}',
+        title=f'DModX statistic plot ({phase}) \n alpha: {alpha*100}% -- Threshold: {dmodx_limit:.2f}',
     ).interactive()
 
-    spe_chart.configure_title(
+    dmodx_chart.configure_title(
         fontSize=20,
         font='Courier',
         anchor='start',
@@ -388,11 +312,13 @@ def spe_plot_p2(spe: pd.DataFrame, alpha: float, spe_limit: float) -> alt.LayerC
     )
 
     threshold = alt.Chart(
-                    pd.DataFrame({'y': [spe_limit]})).mark_rule(
+                    pd.DataFrame({'y': [dmodx_limit]})).mark_rule(
                     strokeDash=[12, 6], color='red').encode(y='y')
 
     # Altair plot for the SPE statistic
-    return (spe_chart + threshold)
+    return (dmodx_chart + threshold)
+
+
 
 def residuals_barplot(residuals: pd.DataFrame, SPE: np.ndarray, obs_name:str) -> alt.Chart:
     """
@@ -542,6 +468,28 @@ def hotelling_t2_contribution_plot(contributions_df: pd.DataFrame, hotelling: fl
         The DataFrame containing the contributions of each variable to the Hotelling's T2 statistic.
     """
     return contribution_plot(contributions_df, hotelling, obs_name, "Hotelling's T2")
+
+def dmodx_contribution_plot(contributions_df: pd.DataFrame, dmodx: float, obs_name: str) -> alt.Chart:
+    """
+    Generates an interactive bar plot visualizing each variable's contribution to the DModX statistic for a specific observation.
+
+    Parameters
+    ----------
+    contributions_df : pd.DataFrame
+        DataFrame containing the contributions of each variable to the DModX statistic.
+    dmodx : float
+        The DModX value for the observation.
+    obs_name : str
+        The name or index of the observation being analyzed.
+
+    Returns
+    -------
+    alt.Chart
+        An Altair Chart object representing the interactive bar plot of variable contributions to the DModX statistic.
+    pd.DataFrame
+        The DataFrame containing the contributions of each variable to the DModX statistic.
+    """
+    return contribution_plot(contributions_df, dmodx, obs_name, "DModX")
 
 def actual_vs_predicted(predictions_df: pd.DataFrame) -> alt.Chart:
     """
