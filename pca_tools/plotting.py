@@ -542,3 +542,48 @@ def hotelling_t2_contribution_plot(contributions_df: pd.DataFrame, hotelling: fl
         The DataFrame containing the contributions of each variable to the Hotelling's T2 statistic.
     """
     return contribution_plot(contributions_df, hotelling, obs_name, "Hotelling's T2")
+
+def actual_vs_predicted(predictions_df: pd.DataFrame) -> alt.Chart:
+    """
+    Create an interactive grouped bar chart comparing Actual vs Predicted values for each variable.
+
+    This function formats the input DataFrame in long format (with columns 'Variable', 'Type', and 'Value')
+    and generates an Altair chart that displays side-by-side bars for each variable. The chart width is
+    dynamically adjusted based on the number of unique variables present in the data.
+
+    Parameters
+    ----------
+    predictions_df : pd.DataFrame
+        A DataFrame in long format with the following columns:
+            - 'Variable': Name of the variable.
+            - 'Type': Category of the value (e.g., 'Actual', 'Predicted').
+            - 'Value': Numeric value corresponding to the variable and type.
+
+    Returns
+    -------
+    alt.Chart
+        An interactive Altair chart displaying Actual vs Predicted values per variable.
+    """
+    # Compute the number of unique variables and set the desired width per variable.
+    num_vars = predictions_df['Variable'].nunique()
+    width_per_variable = 60  # Adjust the width per variable if needed.
+    chart_width = num_vars * width_per_variable
+
+    # Create the chart.
+    chart = alt.Chart(predictions_df).mark_bar().encode(
+        x=alt.X('Variable:N', title='Variable', axis=alt.Axis(labelAngle=45)),
+        xOffset=alt.X('Type:N'),
+        y=alt.Y('Value:Q', title='Value'),
+        color=alt.Color('Type:N', scale=alt.Scale(scheme='category10')),
+        tooltip=[
+            alt.Tooltip('Variable:N', title='Variable'),
+            alt.Tooltip('Type:N', title='Type'),
+            alt.Tooltip('Value:Q', title='Value', format=".2f")
+        ]
+    ).properties(
+        width=chart_width,
+        height=400,
+        title='Actual vs Predicted Values per Variable'
+    ).interactive()
+
+    return chart

@@ -14,7 +14,7 @@ from sklearn.preprocessing import StandardScaler
 from .exceptions import NotDataFrameError, ModelNotFittedError, NotAListError, NotBoolError, NComponentsError
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.decomposition import PCA as PCA_sk
-from .plotting import score_plot, biplot, loadings_barplot, hotelling_t2_plot_p1, hotelling_t2_plot_p2, spe_plot_p1, spe_plot_p2, residuals_barplot, spe_contribution_plot, hotelling_t2_contribution_plot
+from .plotting import score_plot, biplot, loadings_barplot, hotelling_t2_plot_p1, hotelling_t2_plot_p2, spe_plot_p1, spe_plot_p2, residuals_barplot, spe_contribution_plot, hotelling_t2_contribution_plot, actual_vs_predicted
 from .decorators import validate_dataframe, require_fitted, cache_result
 from .preprocess import preprocess
 
@@ -109,19 +109,42 @@ class PCA(BaseEstimator, TransformerMixin):
 
     @validate_dataframe('data')
     def fit(self, data, y=None):
-
+        """
+        Fit the PCA model using the provided training data.
+    
+        If standardization is enabled (self._standardize), the method will:
+          - Determine the numerical features from the input data (if not explicitly provided via self._numerical_features).
+          - Fit a scaler on these numerical features.
+        
+        The method then trains the PCA model by calling self.train(data), and calculates model performance metrics, including the Squared Prediction Error (SPE) and Hotelling's T² statistic for the training set.
+        Finally, the control limits for Hotelling's T² (Phase I and Phase II) and SPE are computed using the specified significance level (alpha).
+    
+        Parameters
+        ----------
+        data : pd.DataFrame
+            The input data used for training the PCA model. It should contain the features intended for analysis.
+        y : Any, optional
+            Not used in this PCA model. Included for compatibility with scikit-learn's estimator API.
+    
+        Returns
+        -------
+        self
+            Returns the fitted instance of the PCA model.
+        """
         if self._standardize:
             if not self._numerical_features:
                 self._numerical_features = data.columns.tolist()
             
             self._scaler.fit(data[self._numerical_features])
-
+    
         self.train(data)
-
+    
         self._spe, _ = self.spe(data)
         self._hotelling = self.hotelling_t2(data)
-
+    
         self._hotelling_limit_p1, self._hotelling_limit_p2, self._spe_limit = self.control_limits(alpha=self._alpha)
+        
+        return self
 
     @validate_dataframe('data')
     def preprocess(self, data):
@@ -245,7 +268,7 @@ class PCA(BaseEstimator, TransformerMixin):
 
     @require_fitted
     @validate_dataframe('data')
-    def inverse_transform(self, data):
+    def inverse_transform(self, data:pd.DataFrame):
         '''
         Reconstructs the original dataset from its PCA-transformed version.
 
@@ -352,14 +375,11 @@ class PCA(BaseEstimator, TransformerMixin):
         """
         Compute Hotelling's T² statistic for each observation.
     
-        Hotelling's T² represents the estimated squared Mahalanobis distance from the center of the latent 
-        subspace to the projection of each observation. It is calculated as:
+        Hotelling's T² represents the estimated squared Mahalanobis distance from the center of the latent subspace to the projection of each observation. It is calculated as:
         
             T² = sum((t_a)**2 / lambda_a)
         
-        where lambda_a is the eigenvalue of the ath component and t_a is the score of the observation 
-        on the ath component. Under the assumption of multivariate normal scores, T² can be used 
-        to detect outliers; observations with T² above the control limit may be considered extreme outliers.
+        where lambda_a is the eigenvalue of the ath component and t_a is the score of the observation on the ath component. Under the assumption of multivariate normal scores, T² can be used to detect outliers; observations with T² above the control limit may be considered extreme outliers.
     
         Parameters
         ----------
@@ -387,13 +407,11 @@ class PCA(BaseEstimator, TransformerMixin):
         """
         Computes the Squared Prediction Error (SPE) statistic for every observation in the given data.
     
-        SPE is defined as the squared Euclidean distance between the original data and its projection 
-        onto the PCA subspace. In other words, for each observation, SPE is calculated as:
+        SPE is defined as the squared Euclidean distance between the original data and its projection onto the PCA subspace. In other words, for each observation, SPE is calculated as:
         
             SPE = || e ||²  where e = original observation - reconstruction
     
-        High SPE values indicate that the observation is not well represented by the PCA model, 
-        which may suggest that the observation is an outlier.
+        High SPE values indicate that the observation is not well represented by the PCA model, which may suggest that the observation is an outlier.
     
         Parameters
         ----------
@@ -421,9 +439,9 @@ class PCA(BaseEstimator, TransformerMixin):
     
         return SPE_values.tolist(), residuals
     
-    @validate_dataframe('X_predict')
+    @validate_dataframe('data')
     @require_fitted
-    def project(self, X_predict):
+    def project(self, data:pd.DataFrame):
         """
         Projects new data onto the fitted PCA model and calculates Hotelling's T2 and SPE statistics.
 
@@ -432,53 +450,53 @@ class PCA(BaseEstimator, TransformerMixin):
         which can be used for anomaly detection or assessing the fit of the model.
 
         Parameters:
-        - X_predict (pd.DataFrame): The new data to be projected. Must be a pandas DataFrame.
+        - data (pd.DataFrame): The new data to be projected. Must be a pandas DataFrame.
 
         Raises:
-        - ValueError: If `X_predict` is not a pandas DataFrame.
+        - ValueError: If `data` is not a pandas DataFrame.
         - ValueError: If the model has not been fitted yet.
 
         Returns:
-        - hotelling_p2 (list of float): The Hotelling's T2 statistic for each observation in `X_predict`.
-        - spe_p2 (list of float): The SPE statistic for each observation in `X_predict`.
+        - hotelling_p2 (list of float): The Hotelling's T2 statistic for each observation in `data`.
+        - spe_p2 (list of float): The SPE statistic for each observation in `data`.
         - residuals (np.ndarray): The residuals of the projection, indicating the difference between the original 
         data and its reconstruction from the principal components.
         - predicted_scores (pd.DataFrame): The scores of the projected data on the principal components.
         """
         
-        hotelling_p2 = self.hotelling_t2(X_predict)
+        hotelling_p2 = self.hotelling_t2(data)
         
-        predicted_scores = self.transform(X_predict)
+        predicted_scores = self.transform(data)
 
-        spe_p2, residuals = self.spe(X_predict)
+        spe_p2, residuals = self.spe(data)
 
         return hotelling_p2, spe_p2, residuals, predicted_scores
     
-    @validate_dataframe('X_predict')
+    @validate_dataframe('data')
     @require_fitted
-    def predict(self, X_predict):
+    def predict(self, data:pd.DataFrame):
         '''
         Predicts the probability of an observation being an outlier
 
         Parameters
         ----------
-        X_predict : array-like, shape (n_samples, n_features)
+        data : array-like, shape (n_samples, n_features)
             The data to be predicted
         Returns
         -------
         response : dict
             Dictionary containing the prediction of the model given an observation. It contains attributes such as the T2 and SPE limits and values, as well as the probability of the observation being an outlier
         '''
-        hotelling, SPE, _, _ = self.project(X_predict)
+        hotelling, SPE, _, _ = self.project(data)
 
-        X_transform = X_predict.copy()
+        X_transform = data.copy()
         if self._standardize:
             X_transform = self.preprocess(data=X_transform)
 
-        t2_contributions, _ = self.t2_contribution(X_predict)
-        spe_contributions, _ = self.spe_contribution(X_predict)
+        t2_contributions, _ = self.t2_contribution(data)
+        spe_contributions, _ = self.spe_contribution(data)
 
-        if X_predict.shape[1]>1:
+        if data.shape[1]>1:
             return {'anomaly_level_hotelling': hotelling,
                     'control_limit_hotelling': self._hotelling_limit_p2,
                     'anomaly_level_spe': SPE,
@@ -551,7 +569,7 @@ class PCA(BaseEstimator, TransformerMixin):
         np.ndarray
             The indices of the high scores.
         """
-        return np.where(normalized_scores > 0.3)[1]
+        return np.where(normalized_scores > 0)[1]
     
     def _calculate_contributions(self, observation: pd.DataFrame, projected_scores: pd.DataFrame, high_scores: np.ndarray) -> pd.DataFrame:
         """
@@ -571,20 +589,25 @@ class PCA(BaseEstimator, TransformerMixin):
         pd.DataFrame
             DataFrame containing the contributions of each variable to the T2 statistic.
         """
-        truncated_loadings = self._loadings.values[:, high_scores]
+        truncated_loadings = self._loadings.values[:, high_scores].T
         truncated_scores = projected_scores.values[:, high_scores]
         truncated_eigenvals = self._eigenvals[high_scores]
         mean_diff = (observation - self._mean_train).values
 
-        print(len(high_scores))
+        pc_features = ['PC_' + str(i+1) for i in high_scores]
 
-        # Calculate the contribution of each variable to the T2 statistic.
-        contributions = ((truncated_scores / truncated_eigenvals) @ truncated_loadings.T) * mean_diff
+        loadings_mean = (truncated_loadings * mean_diff)
 
-        # Ensure contributions are non-negative. Negative contributions only make the score smaller
-        contributions = np.maximum(contributions, 0)
+        contributions = np.zeros(loadings_mean.shape)
+        for i in range(loadings_mean.shape[0]):
+            contributions[i, :] = loadings_mean[i, :] * (truncated_scores[0, i] / truncated_eigenvals[i])
 
-        return pd.DataFrame({'variable': self._variables, 'contribution': contributions.mean(axis=0)})
+        contributions_df = pd.DataFrame(contributions, columns=self._variables, index=pc_features)
+
+        #If the contribution is negative, set it to 0
+        contributions_df[contributions_df < 0] = 0
+
+        return pd.DataFrame({'variable': self._variables, 'contribution': contributions_df.mean(axis=0)})
     
     def spe_contribution(self, observation: pd.DataFrame) -> pd.DataFrame:
         """
@@ -1022,17 +1045,96 @@ class PCA(BaseEstimator, TransformerMixin):
     
         return spe_contribution_plot(contributions_df, SPE, obs_name)
     
-    def hotelling_t2_contribution_plot(self, observation:pd.DataFrame):
-        
-
+    def hotelling_t2_contribution_plot(self, observation: pd.DataFrame) -> alt.Chart:
+        """
+        Generate an interactive Altair plot showing the contributions of each variable to Hotelling's T² statistic.
+    
+        The function validates that the input contains exactly one observation and that the number of features 
+        matches the variables from the fitted model. It then computes the contributions using the t2_contribution 
+        method and passes the results to the plotting function for visualization.
+    
+        Parameters
+        ----------
+        observation : pd.DataFrame
+            A DataFrame representing a single observation. It must have exactly one row and the same number of 
+            columns as the fitted PCA model (i.e., len(self._variables)).
+    
+        Returns
+        -------
+        alt.Chart
+            An interactive Altair chart visualizing the contributions of each variable to Hotelling's T² statistic 
+            for the given observation.
+    
+        Raises
+        ------
+        ValueError
+            If the number of features in the observation does not match the number of model variables or if the 
+            DataFrame does not contain exactly one observation.
+        """
+        # Validate that the observation has the expected number of features.
         if observation.shape[1] != len(self._variables):
-            raise ValueError(f'Number of features in data must be {len(self._variables)}')
-        
+            raise ValueError(f"Input data must have {len(self._variables)} features, but got {observation.shape[1]}.")
+    
+        # Validate that there is exactly one observation.
         if observation.shape[0] != 1:
-            raise ValueError(f'Number of observations in data must be 1')
-        
+            raise ValueError("Input data must contain exactly one observation.")
+    
+        # Calculate contributions and Hotelling's T² statistic.
         contributions_df, hotelling = self.t2_contribution(observation)
+        
+        # Extract observation name (assumes the index is informative).
         obs_name = observation.index.values[0]
-
-        # Altair plot for the residuals
+    
+        # Generate and return the Altair plot for Hotelling's T² contributions.
         return hotelling_t2_contribution_plot(contributions_df, hotelling, obs_name)
+    
+    def actual_vs_predicted(self, observation: pd.DataFrame) -> alt.Chart:
+        """
+        Generate an interactive Altair chart comparing Actual versus Predicted values for a given observation.
+    
+        This method first transforms the input observation into the PCA latent space and then reconstructs it back to the original space, producing predicted values. It compares these predictions with the actual values of the observation for each variable. The resulting data is reshaped into a long format, and an interactive grouped bar chart is generated using an external Altair plotting function.
+    
+        Parameters
+        ----------
+        observation : pd.DataFrame
+            A DataFrame representing a single observation. It must have exactly one row and the same number of 
+            features as the fitted PCA model (i.e., len(self._variables)).
+    
+        Returns
+        -------
+        alt.Chart
+            An interactive Altair chart displaying side-by-side bars comparing Actual and Predicted values for each variable.
+    
+        Raises
+        ------
+        ValueError
+            If the observation does not contain exactly one row or if the number of features does not match the model.
+        """
+        # Validate input dimensions
+        if observation.shape[0] != 1:
+            raise ValueError("Input observation must contain exactly one row.")
+        if observation.shape[1] != len(self._variables):
+            raise ValueError(f"Input observation must have {len(self._variables)} features, but got {observation.shape[1]}.")
+    
+        # Generate predicted values by applying the PCA transformation and its inverse.
+        predicted_values = self.inverse_transform(self.transform(observation))
+    
+        # Transpose the predicted values DataFrame so that each variable becomes a row.
+        predicted_df = predicted_values.T.copy()
+        predicted_df.columns = ['Predicted']
+    
+        # Add Actual values from the observation (transposed to align with variables).
+        predicted_df['Actual'] = observation.T.values.flatten()
+    
+        # Reset index to convert the variable names (index) into a column.
+        predicted_df = predicted_df.reset_index().rename(columns={'index': 'Variable'})
+    
+        # Melt the DataFrame to long format for Altair; now each row represents a variable-type pair.
+        melted_df = pd.melt(predicted_df,
+                            id_vars='Variable',
+                            value_vars=['Predicted', 'Actual'],
+                            var_name='Type',
+                            value_name='Value')
+    
+        # Generate and return the interactive Altair chart using the external plotting function.
+        return actual_vs_predicted(melted_df)
