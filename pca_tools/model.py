@@ -99,13 +99,18 @@ class PCA(BaseEstimator, TransformerMixin):
         self._loadings = pd.DataFrame(self.model.components_.T, columns=[f"PC_{i+1}" for i in range(self._ncomps)], index=self._variables)
         self._scores = pd.DataFrame(self.model.transform(X), columns=[f"PC_{i+1}" for i in range(self._ncomps)], index=self._index)
 
-    def _calculate_metrics(self, data: pd.DataFrame, X: np.ndarray):
+    def _calculate_metrics(self, data: pd.DataFrame):
         self._explained_variance = self.model.explained_variance_ratio_
         self._rsquared_acc = np.cumsum(self.model.explained_variance_ratio_)
         self._eigenvals = np.var(self._scores.values, axis=0)
-        self._residuals_fit = X - self._scores @ self._loadings.T
+        self._residuals_fit = data - self._scores @ self._loadings.T
         self._mean_train = np.mean(data.values, axis=0)
         self._std_train = np.std(data.values, axis=0)
+
+        reconstructed = self.inverse_transform(self.transform(data))
+        self._total_sum_squares = np.sum((data-self._mean_train) ** 2, axis=0)
+        self._explained_sum_squares = np.sum((reconstructed-self._mean_train) ** 2, axis=0)
+        self._w_k = np.sqrt(self._explained_sum_squares/self._total_sum_squares).values
 
     @validate_dataframe('data')
     def fit(self, data, y=None):
@@ -201,7 +206,7 @@ class PCA(BaseEstimator, TransformerMixin):
         self._initialize_attributes(data)
         X = self._preprocess_data(data)
         self._fit_model(X)
-        self._calculate_metrics(data, X)
+        self._calculate_metrics(data)
 
     @validate_dataframe('data')
     @require_fitted
@@ -366,6 +371,7 @@ class PCA(BaseEstimator, TransformerMixin):
         # SPE (Squared Prediction Error) control limit
         mean_spe = np.mean(self._spe)
         var_spe = np.var(self._spe)
+
         # Calculate degrees of freedom based on SPE moments
         df_spe = (2 * mean_spe ** 2) / var_spe if var_spe != 0 else 1  # safeguard against division by zero
         constant_spe = var_spe / (2 * mean_spe) if mean_spe != 0 else 1
@@ -377,7 +383,7 @@ class PCA(BaseEstimator, TransformerMixin):
         A = self._ncomps
 
         # Pooled residual standard deviation
-        s_0 = np.sqrt(np.sum(self._residuals_fit.values**2)/((m-A-1)*(K-A)))
+        s_0 = np.sqrt(np.sum(self._spe)/((m-A-1)*(K-A)))
 
         dfn = K-A
         dfd = (m-A-1)*(K-A)
@@ -722,7 +728,7 @@ class PCA(BaseEstimator, TransformerMixin):
     
         return contributions_df
     
-    def _calculate_dmodx_contributions(self, residuals: np.ndarray) -> pd.DataFrame:
+    def _calculate_dmodx_contributions(self, residuals:pd.DataFrame) -> pd.DataFrame:
         """
         Calculate the contributions of each variable to the DmodX (Distance to Model in X-space) statistic.
     
@@ -746,14 +752,9 @@ class PCA(BaseEstimator, TransformerMixin):
                 - 'variable': The name of each variable.
                 - 'contribution': The absolute contribution of the variable to the DmodX.
                 - 'relative_contribution': The fraction of the total DmodX contributed by the variable.
-        """
-        # Calculate the sum of squares of the residuals from the training fit.
-        explained_sum_squares = np.sum((self._residuals_fit.values) ** 2)
-        # Compute weight as the square root of the explained sum of squares.
-        w_k = np.sqrt(explained_sum_squares)
-    
+        """  
         # Multiply the weight with the residuals; assume residuals is a 2D array and take the first row.
-        contribution = w_k * residuals.values
+        contribution = self._w_k * residuals.values
     
         # Create a DataFrame for absolute contributions.
         contributions_df = pd.DataFrame({
@@ -1045,7 +1046,7 @@ class PCA(BaseEstimator, TransformerMixin):
         - The plot's title includes the significance level (alpha) and the threshold value, providing context for the analysis.
         '''
         hotelling = self.hotelling_t2(test_set)
-        hotelling_df = pd.DataFrame({'observation': range(self._nobs), 'T2': hotelling})
+        hotelling_df = pd.DataFrame({'observation': range(len(test_set)), 'T2': hotelling})
 
         return generic_stat_plot(data=hotelling_df, 
                                  stat_column="T2",
