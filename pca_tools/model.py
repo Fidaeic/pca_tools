@@ -14,7 +14,7 @@ from sklearn.preprocessing import StandardScaler
 from .exceptions import NotDataFrameError, ModelNotFittedError, NotAListError, NotBoolError, NComponentsError
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.decomposition import PCA as PCA_sk
-from .plotting import score_plot, biplot, loadings_barplot, hotelling_t2_plot, spe_plot, residuals_barplot, spe_contribution_plot, hotelling_t2_contribution_plot, actual_vs_predicted, dmodx_contribution_plot, dmodx_plot, generic_stat_plot
+from .plotting import score_plot, biplot, loadings_barplot, residuals_barplot, spe_contribution_plot, hotelling_t2_contribution_plot, actual_vs_predicted, dmodx_contribution_plot, generic_stat_plot
 from .decorators import validate_dataframe, require_fitted, cache_result
 from .preprocess import preprocess
 
@@ -23,7 +23,6 @@ class PCA(BaseEstimator, TransformerMixin):
                  numerical_features:list=[], 
                  standardize:bool=True, 
                  tolerance:float=1e-4, 
-                 verbose:bool=False,
                  alpha:float=.99) -> None:
         
         if not 0 < tolerance < 1:
@@ -35,12 +34,8 @@ class PCA(BaseEstimator, TransformerMixin):
         if not isinstance(numerical_features, list):
             raise NotAListError(type(numerical_features).__name__)
         
-        if not isinstance(verbose, bool) or not isinstance(standardize, bool):
-            raise NotBoolError()  
-        
         self._standardize = standardize
         self._tolerance = tolerance
-        self.verbose = verbose
         self._ncomps = n_comps
         self._numerical_features = numerical_features
         self._alpha = alpha
@@ -51,8 +46,13 @@ class PCA(BaseEstimator, TransformerMixin):
         ])
 
     def get_params(self, deep=True):
-        params = super().get_params(deep=deep)
-        return params
+        return {
+            'n_comps': self._ncomps,
+            'numerical_features': self._numerical_features,
+            'standardize': self._standardize,
+            'tolerance': self._tolerance,
+            'alpha': self._alpha
+        }
     
     def set_params(self, **params):
         for key, value in params.items():
