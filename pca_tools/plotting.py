@@ -2,6 +2,7 @@ import altair as alt
 import pandas as pd
 import numpy as np
 from typing import Union
+import re
 
 def score_plot(scores:pd.DataFrame, 
                comp1:int, 
@@ -352,9 +353,6 @@ def difference_plot(df_plot: pd.DataFrame) -> alt.Chart:
         tooltip=['variable', 'value']
     ).interactive()
 
-import altair as alt
-import pandas as pd
-
 def contribution_plot(contributions_df: pd.DataFrame, value: float, obs_name: str, title_prefix: str) -> alt.Chart:
     """
     Generates an interactive bar plot visualizing each variable's contribution to a specific statistic for a specific observation.
@@ -501,3 +499,64 @@ def actual_vs_predicted(predictions_df: pd.DataFrame) -> alt.Chart:
     ).interactive()
 
     return chart
+
+def structural_variance_plot(alpha_A: pd.DataFrame, R2_A: pd.DataFrame, variable_name: str) -> alt.Chart:
+    """
+    Create an interactive Altair chart displaying the structural variance information for a given variable.
+    
+    This function extracts the self-explanatory power (alpha_A) for the selected variable and the corresponding R² values,
+    merges them into a long-format DataFrame, and creates a line chart with points. The x-axis (Principal Component) is 
+    sorted in natural numeric order.
+    
+    Parameters
+    ----------
+    alpha_A : pd.DataFrame
+        DataFrame containing the self-explanatory power values. Its index should be variable names and columns the PC labels.
+    R2_A : pd.DataFrame
+        DataFrame containing the R² values for each principal component (with PCs as index).
+    variable_name : str
+        The name of the variable for which the plot is generated.
+    
+    Returns
+    -------
+    alt.Chart
+        An interactive Altair chart showing SVI metrics for the specified variable.
+    """
+    # Extract the self-explanatory power for the given variable and reset the index:
+    alpha_series = alpha_A.loc[variable_name].reset_index()
+    alpha_series.columns = ['PC', 'alpha_value']
+    
+    # Reset the index for the R2 DataFrame:
+    R2_series = R2_A.reset_index()
+    R2_series.columns = ['PC', 'R2_value']
+
+    # Merge the two series on the PC column:
+    merged_df = pd.merge(alpha_series, R2_series, on='PC')
+    
+    # Melt the merged DataFrame into long format:
+    melted_df = merged_df.melt(id_vars='PC', 
+                               value_vars=['alpha_value', 'R2_value'], 
+                               var_name='Metric', value_name='Value')
+    
+    # Create a custom sort order based on the integer part of "PC".
+    def extract_pc_num(pc_label):
+        match = re.search(r'\d+', pc_label)
+        return int(match.group()) if match else 0
+
+    sorted_pcs = sorted(melted_df['PC'].unique(), key=extract_pc_num)
+    
+    # Create the Altair chart with custom x-axis sort:
+    return alt.Chart(melted_df).mark_line(point=True).encode(
+        x=alt.X('PC:N', title='Principal Component', sort=sorted_pcs),
+        y=alt.Y('Value:Q', title='Explained variance'),
+        color=alt.Color('Metric:N', title='SVI Metric', 
+                        scale=alt.Scale(domain=['alpha_value', 'R2_value'],
+                                        range=['blue', 'orange'])),
+        tooltip=[alt.Tooltip('PC:N', title='Principal Component'),
+                 alt.Tooltip('Metric:N', title='Metric'),
+                 alt.Tooltip('Value:Q', title='Value', format=".2f")]
+    ).properties(
+        title=f'Structural and Variance Information (SVI) for {variable_name}',
+        width=600,
+        height=400
+    ).interactive()

@@ -14,7 +14,7 @@ from sklearn.preprocessing import StandardScaler
 from .exceptions import NotDataFrameError, ModelNotFittedError, NotAListError, NotBoolError, NComponentsError
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.decomposition import PCA as PCA_sk
-from .plotting import score_plot, biplot, loadings_barplot, residuals_barplot, spe_contribution_plot, hotelling_t2_contribution_plot, actual_vs_predicted, dmodx_contribution_plot, generic_stat_plot
+from .plotting import score_plot, biplot, loadings_barplot, residuals_barplot, spe_contribution_plot, hotelling_t2_contribution_plot, actual_vs_predicted, dmodx_contribution_plot, generic_stat_plot, structural_variance_plot
 from .decorators import validate_dataframe, require_fitted, cache_result
 from .preprocess import preprocess
 
@@ -111,6 +111,61 @@ class PCA(BaseEstimator, TransformerMixin):
         self._total_sum_squares = np.sum((data-self._mean_train) ** 2, axis=0)
         self._explained_sum_squares = np.sum((reconstructed-self._mean_train) ** 2, axis=0)
         self._w_k = np.sqrt(self._explained_sum_squares/self._total_sum_squares).values
+
+    def svi_metrics(self):
+        """
+        Compute Structural Variance Information (SVI) metrics for the PCA model.
+    
+        This method calculates three key outputs related to the model’s interpretability:
+        
+        1. Q_A: The final cross-product matrix computed from the loadings (i.e. for all principal components).  
+           This is derived using the loadings matrix computed by the PCA.
+           
+        2. alpha_A: A DataFrame of self-explanatory power values for each variable, where each column corresponds 
+           to a principal component. For each component, the diagonal of the cumulative loadings cross-product 
+           matrix (Q_A for that component subset) is stored. In effect, alpha_A[i, comp] quantifies the contribution 
+           of the ith variable when up to the (comp+1)th principal component is considered.
+           
+        3. R2_A: A DataFrame of cumulative explained variance (R²) values for each principal component, where the 
+           index is labeled by the principal component (e.g., PC1, PC2, …).
+    
+        Returns
+        -------
+        tuple of pd.DataFrame
+            A tuple containing:
+              - Q_A: A DataFrame representing the cross-product matrix of loadings (from the final iteration),
+                     with the variables as both index and columns.
+              - alpha_A: A DataFrame (shape: n_variables x n_comps) with self-explanatory power values for each 
+                         variable, indexed by variable names and with columns labeled 'PC1', 'PC2', …, 'PCn'.
+              - R2_A: A DataFrame with the cumulative explained variance for each principal component,
+                      indexed by 'PC1', 'PC2', …, with a single column 'R2'.
+        """
+        # P: DataFrame of loadings (features x components)
+        P = self._loadings
+    
+        # Initialize the alpha_A matrix to store self-explanatory power values.
+        alpha_A = np.zeros((P.shape[0], self._ncomps))
+    
+        # For each principal component, compute Q_A and extract its diagonal elements.
+        # The diagonal values represent the individual contributions (self-explanatory power) of the variables.
+        for comp in range(self._ncomps):
+            # Compute the cross-product for loadings up to current component (comp+1)
+            Q_A = P.values[:, :comp+1] @ P.values[:, :comp+1].T
+            alpha_A[:, comp] = np.diag(Q_A)
+            
+        # Convert the alpha_A matrix into a DataFrame with appropriate row and column labels.
+        alpha_A = pd.DataFrame(alpha_A, index=P.index,
+                               columns=[f'PC{i+1}' for i in range(self._ncomps)])
+    
+        # Create a DataFrame for cumulative explained variance (R²) values.
+        R2_A = pd.DataFrame(self.get_rsquared_acc(),
+                            index=[f'PC{i+1}' for i in range(self._ncomps)],
+                            columns=['R2'])
+    
+        # Convert the final Q_A (from the last iteration) into a DataFrame.
+        Q_A = pd.DataFrame(Q_A, index=P.index, columns=P.index)
+        
+        return Q_A, alpha_A, R2_A
 
     @validate_dataframe('data')
     def fit(self, data, y=None):
@@ -1280,6 +1335,8 @@ class PCA(BaseEstimator, TransformerMixin):
     
         return spe_contribution_plot(contributions_df, SPE, obs_name)
     
+    @require_fitted
+    @validate_dataframe('observation')
     def hotelling_t2_contribution_plot(self, observation: pd.DataFrame) -> alt.Chart:
         """
         Generate an interactive Altair plot showing the contributions of each variable to Hotelling's T² statistic.
@@ -1323,6 +1380,8 @@ class PCA(BaseEstimator, TransformerMixin):
         # Generate and return the Altair plot for Hotelling's T² contributions.
         return hotelling_t2_contribution_plot(contributions_df, hotelling, obs_name)
     
+    @require_fitted
+    @validate_dataframe('observation')
     def dmodx_contribution_plot(self, observation: pd.DataFrame) -> alt.Chart:
 
         contributions_df, dmodx = self.dmodx_contribution(observation)
@@ -1331,6 +1390,8 @@ class PCA(BaseEstimator, TransformerMixin):
 
         return dmodx_contribution_plot(contributions_df, dmodx, obs_name)
     
+    @require_fitted
+    @validate_dataframe('observation')
     def actual_vs_predicted(self, observation: pd.DataFrame) -> alt.Chart:
         """
         Generate an interactive Altair chart comparing Actual versus Predicted values for a given observation.
@@ -1381,3 +1442,40 @@ class PCA(BaseEstimator, TransformerMixin):
     
         # Generate and return the interactive Altair chart using the external plotting function.
         return actual_vs_predicted(melted_df)
+
+    @require_fitted
+    def svi_plot(self, variable_name: str) -> alt.Chart:
+        """
+        Generate an interactive Altair chart displaying the Structural Variance Information (SVI)
+        metrics for a specified variable.
+    
+        This method computes the SVI metrics for the PCA model by calling the svi_metrics method,
+        which returns three outputs: the final cross-product matrix (Q_A), the self-explanatory power DataFrame (alpha_A), and the cumulative explained variance DataFrame (R2_A). For visualization, only alpha_A and R2_A are used. These two DataFrames are provided as inputs to the external plotting function structural_variance_plot, which generates an interactive line plot showing how the self-explanatory power (alpha) and the cumulative explained variance (R²) evolve over the principal components for the given variable.
+    
+        Parameters
+        ----------
+        variable_name : str
+            The name of the variable for which the SVI metrics will be visualized. This variable
+            should exist in the fitted model's data.
+    
+        Returns
+        -------
+        alt.Chart
+            An interactive Altair chart visualizing the SVI metrics for the specified variable. This chart
+            overlays the self-explanatory power (alpha_A) and the cumulative R² (R2_A) across the principal
+            components and is suitable for display in Jupyter notebooks or saving as an image.
+    
+        Notes
+        -----
+        - The method assumes that the PCA model has already been fitted and that svi_metrics has been computed.
+        - The structural_variance_plot function handles the details of data merging, ordering of components,
+          and the creation of an interactive Altair plot.
+        """
+        # Compute the SVI metrics.
+        # The svi_metrics method returns a tuple: (Q_A, alpha_A, R2_A).
+        # Q_A (cross-product matrix) is not used in the plot.
+        _, alpha_A, R2_A = self.svi_metrics()
+    
+        # Generate and return the structural variance plot for the specified variable.
+        # This function creates an interactive Altair chart showing SVI metrics.
+        return structural_variance_plot(alpha_A, R2_A, variable_name)
