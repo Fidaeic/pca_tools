@@ -17,6 +17,7 @@ from sklearn.decomposition import PCA as PCA_sk
 from .plotting import score_plot, biplot, loadings_barplot, residuals_barplot, spe_contribution_plot, hotelling_t2_contribution_plot, actual_vs_predicted, dmodx_contribution_plot, generic_stat_plot, structural_variance_plot
 from .decorators import validate_dataframe, require_fitted, cache_result
 from .preprocess import preprocess
+from .utils import compute_R2_matrix
 
 class PCA(BaseEstimator, TransformerMixin):
     def __init__(self, n_comps:int=None, 
@@ -111,8 +112,12 @@ class PCA(BaseEstimator, TransformerMixin):
         self._total_sum_squares = np.sum((data-self._mean_train) ** 2, axis=0)
         self._explained_sum_squares = np.sum((reconstructed-self._mean_train) ** 2, axis=0)
         self._w_k = np.sqrt(self._explained_sum_squares/self._total_sum_squares).values
+        # Compute the SVI metrics.
+        # The svi_metrics method returns a tuple: (Q_A, alpha_A, R2_A).
+        # Q_A (cross-product matrix) is not used in the plot.
+        self._Q_A, self._alpha_A, self._R2_A = self.svi_metrics(data)
 
-    def svi_metrics(self):
+    def svi_metrics(self, data: pd.DataFrame):
         """
         Compute Structural Variance Information (SVI) metrics for the PCA model.
     
@@ -142,6 +147,7 @@ class PCA(BaseEstimator, TransformerMixin):
         """
         # P: DataFrame of loadings (features x components)
         P = self._loadings
+        X = self._preprocess_data(data.copy())
     
         # Initialize the alpha_A matrix to store self-explanatory power values.
         alpha_A = np.zeros((P.shape[0], self._ncomps))
@@ -158,9 +164,8 @@ class PCA(BaseEstimator, TransformerMixin):
                                columns=[f'PC{i+1}' for i in range(self._ncomps)])
     
         # Create a DataFrame for cumulative explained variance (R²) values.
-        R2_A = pd.DataFrame(self.get_rsquared_acc(),
-                            index=[f'PC{i+1}' for i in range(self._ncomps)],
-                            columns=['R2'])
+        R2_A = compute_R2_matrix(P.values, X)
+        R2_A = pd.DataFrame(R2_A, columns=[f'PC{i+1}' for i in range(self._ncomps)], index=P.index)
     
         # Convert the final Q_A (from the last iteration) into a DataFrame.
         Q_A = pd.DataFrame(Q_A, index=P.index, columns=P.index)
@@ -1470,12 +1475,7 @@ class PCA(BaseEstimator, TransformerMixin):
         - The method assumes that the PCA model has already been fitted and that svi_metrics has been computed.
         - The structural_variance_plot function handles the details of data merging, ordering of components,
           and the creation of an interactive Altair plot.
-        """
-        # Compute the SVI metrics.
-        # The svi_metrics method returns a tuple: (Q_A, alpha_A, R2_A).
-        # Q_A (cross-product matrix) is not used in the plot.
-        _, alpha_A, R2_A = self.svi_metrics()
-    
+        """    
         # Generate and return the structural variance plot for the specified variable.
         # This function creates an interactive Altair chart showing SVI metrics.
-        return structural_variance_plot(alpha_A, R2_A, variable_name)
+        return structural_variance_plot(self._alpha_A, self._R2_A, variable_name)

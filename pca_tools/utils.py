@@ -190,3 +190,69 @@ def column_wise_k_fold_pca_cv(data: pd.DataFrame,
 
     return optimal_components, press_scores
 
+def compute_R2_matrix(P, X):
+    """
+    Compute the cumulative R² values for each variable as more principal components are included.
+
+    This function calculates a cumulative R² metric for each variable by iteratively considering an increasing number of principal components (columns of the loadings matrix P). For each component index a (ranging
+    from 0 to A-1), the followingd steps are performed:
+    
+    1. Compute a temporary squared loadings matrix Q_A using the first (a+1) columns of P: 
+         Q_A = P[:, :a+1] @ P[:, :a+1].T  
+       This results in an (M x M) matrix, where M is the number of variables.
+       
+    2. Extract the diagonal of Q_A (denoted as alpha_A), which represents the direct self-explanatory 
+       contribution of each variable when using the first (a+1) components.
+       
+    3. For each variable m, compute a numerator that aggregates the effect of the variable’s own contribution 
+       (term1) and its cross-interactive contributions with all other variables (term2). Specifically:
+         - term1 is computed as X[:, m] * alpha_A[m],
+         - term2 is the sum over all other variables v (v ≠ m) of the product X[:, v] * Q_A[v, m],
+         - The numerator is then the sum of squares of (term1 + term2) across all samples.
+       
+    4. Compute the denominator as the sum of squares of X[:, m] over all samples.
+       
+    5. The cumulative R² value for variable m with (a+1) components is given by:
+         R2[m, a] = numerator / denominator   (if denominator is non-zero, otherwise 0).
+
+    Parameters
+    ----------
+    P : numpy.ndarray
+        Loadings matrix from PCA of shape (M, A), where M is the number of variables and A is the total number 
+        of principal components.
+    X : numpy.ndarray
+        Data matrix of shape (N, M), assumed to be centered and normalized, where N is the number of samples.
+
+    Returns
+    -------
+    numpy.ndarray
+        A matrix of cumulative R² values with shape (M, A), where each row corresponds to a variable and each 
+        column corresponds to the cumulative R² computed using the first (a+1) principal components.
+    """
+    _, M = X.shape
+    A = P.shape[1]  # Total number of principal components
+    R2 = np.zeros((M, A))  # Initialize the result matrix
+
+    # Iterate over the number of principal component subsets (cumulative)
+    for a in range(A):
+        # Compute Q_A using the first (a+1) components of P, resulting in an (M x M) matrix
+        Q_A = P[:, :a+1] @ P[:, :a+1].T
+        
+        # The diagonal of Q_A gives the self-explanatory power for the current set of components
+        alpha_A = np.diag(Q_A)
+        
+        # For each variable, compute the cumulative R² metric
+        for m in range(M):
+            # term1: Contribution of variable m itself
+            term1 = X[:, m] * alpha_A[m]
+            # term2: Contribution from the interactions with other variables
+            term2 = np.sum([X[:, v] * Q_A[v, m] for v in range(M) if v != m], axis=0)
+            # Numerator: Sum of squared aggregated contributions over all samples
+            numerator = np.sum((term1 + term2) ** 2)
+            # Denominator: Sum of squares of the values for variable m
+            denominator = np.sum(X[:, m] ** 2)
+            
+            # Calculate cumulative R² for variable m for the current number of components
+            R2[m, a] = numerator / denominator if denominator != 0 else 0
+
+    return R2

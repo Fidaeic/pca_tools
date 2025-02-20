@@ -527,7 +527,7 @@ def structural_variance_plot(alpha_A: pd.DataFrame, R2_A: pd.DataFrame, variable
     alpha_series.columns = ['PC', 'alpha_value']
     
     # Reset the index for the R2 DataFrame:
-    R2_series = R2_A.reset_index()
+    R2_series = R2_A.loc[variable_name].reset_index()
     R2_series.columns = ['PC', 'R2_value']
 
     # Merge the two series on the PC column:
