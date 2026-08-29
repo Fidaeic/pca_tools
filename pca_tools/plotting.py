@@ -27,6 +27,21 @@ def score_plot(scores:pd.DataFrame,
         '''       
         # Reset the index of the scores DataFrame
         scores = scores.reset_index()
+        has_test_set = test_set is not None
+        role_field = 'Data role'
+        role_shape = alt.Shape(
+            f'{role_field}:N',
+            scale=alt.Scale(domain=['Phase I reference', 'Phase II test'], range=['circle', 'triangle-up']),
+            legend=alt.Legend(title='Data role'),
+        )
+        role_color = alt.Color(
+            f'{role_field}:N',
+            scale=alt.Scale(domain=['Phase I reference', 'Phase II test'], range=['#4C78A8', '#E45756']),
+            legend=alt.Legend(title='Data role'),
+        )
+        role_tooltip = [alt.Tooltip(f'{role_field}:N', title='Data role')] if has_test_set else []
+        if has_test_set:
+            scores[role_field] = 'Phase I reference'
         
         # Apply a single pan/zoom parameter to the composed chart below.  Giving
         # each layer ``.interactive()`` creates duplicate generated parameters
@@ -47,29 +62,39 @@ def score_plot(scores:pd.DataFrame,
             scatter = alt.Chart(scores).mark_circle().encode(
                 x=alt.X(f'PC_{comp1}',title=f'PC {comp1} - {explained_variance[comp1-1]*100:.2f} %'),
                 y=alt.Y(f'PC_{comp2}',title=f'PC {comp2} - {explained_variance[comp2-1]*100:.2f} %'),
-                tooltip=[f"PC_{comp1}", f"PC_{comp2}", hue.name],
-                color=alt.Color(hue.name)
+                tooltip=[f"PC_{comp1}", f"PC_{comp2}", hue.name] + role_tooltip,
+                color=alt.Color(hue.name),
+                shape=role_shape if has_test_set else alt.value('circle'),
             )
         
         else:
             # Create a scatter plot without color encoding
-            scatter = alt.Chart(scores).mark_point().encode(
+            encoding = dict(
                 x=alt.X(f'PC_{comp1}',title=f'PC {comp1} - {explained_variance[comp1-1]*100:.2f} %'),
                 y=alt.Y(f'PC_{comp2}',title=f'PC {comp2} - {explained_variance[comp2-1]*100:.2f} %'),
-                tooltip=[index_name, f"PC_{comp1}", f"PC_{comp2}"]
+                tooltip=[index_name, f"PC_{comp1}", f"PC_{comp2}"] + role_tooltip,
             )
+            if has_test_set:
+                encoding.update(color=role_color, shape=role_shape)
+            scatter = alt.Chart(scores).mark_point().encode(**encoding)
         
         # Check if test_set is provided
         if test_set is not None:
             # Reset the index of the test_set DataFrame
             scores_test = test_set.reset_index()
             
-            # Create a scatter plot for the test set with black points
-            scatter_test = alt.Chart(scores_test).mark_point(color='black', opacity=.1).encode(
+            scores_test[role_field] = 'Phase II test'
+            # Test rows have an explicit role, triangle marker, and a visible
+            # color instead of the former unlabeled transparent points.
+            test_encoding = dict(
                 x=f"PC_{comp1}",
                 y=f"PC_{comp2}",
-                tooltip=[index_name, f"PC_{comp1}", f"PC_{comp2}"]
+                tooltip=[index_name, f"PC_{comp1}", f"PC_{comp2}", alt.Tooltip(f'{role_field}:N', title='Data role')],
+                shape=role_shape,
             )
+            if hue is None:
+                test_encoding['color'] = role_color
+            scatter_test = alt.Chart(scores_test).mark_point(color='#E45756', opacity=.75, size=70).encode(**test_encoding)
         
             # Return the combined plot of test set, scores, and lines
             return (scatter_test + scatter + vline + hline).interactive()
@@ -112,6 +137,22 @@ def biplot(scores:pd.DataFrame,
         mask = np.random.choice(scores.shape[0], 5000, replace=False)
         scores = scores.iloc[mask]
 
+    has_test_set = test_set is not None
+    role_field = 'Data role'
+    role_shape = alt.Shape(
+        f'{role_field}:N',
+        scale=alt.Scale(domain=['Phase I reference', 'Phase II test'], range=['circle', 'triangle-up']),
+        legend=alt.Legend(title='Data role'),
+    )
+    role_color = alt.Color(
+        f'{role_field}:N',
+        scale=alt.Scale(domain=['Phase I reference', 'Phase II test'], range=['#4C78A8', '#E45756']),
+        legend=alt.Legend(title='Data role'),
+    )
+    role_tooltip = [alt.Tooltip(f'{role_field}:N', title='Data role')] if has_test_set else []
+    if has_test_set:
+        scores[role_field] = 'Phase I reference'
+
     # Calculate the hypothenuse of the scores to scale the loadings
     max_pc1 = scores[f'PC_{comp1}'].max()
     max_pc2 = scores[f'PC_{comp2}'].max()
@@ -141,16 +182,20 @@ def biplot(scores:pd.DataFrame,
         scores_plot = alt.Chart(scores.reset_index()).mark_circle().encode(
             x=alt.X(f'PC_{comp1}',title=f'PC {comp1} - {explained_variance[comp1-1]*100:.2f} %'),
             y=alt.Y(f'PC_{comp2}',title=f'PC {comp2} - {explained_variance[comp2-1]*100:.2f} %'),
-            tooltip=[index_name, f"PC_{comp1}", f"PC_{comp2}", hue.name],
-            color=alt.Color(hue.name)
+            tooltip=[index_name, f"PC_{comp1}", f"PC_{comp2}", hue.name] + role_tooltip,
+            color=alt.Color(hue.name),
+            shape=role_shape if has_test_set else alt.value('circle'),
         )
 
     else:
-        scores_plot = alt.Chart(scores.reset_index()).mark_circle().encode(
+        encoding = dict(
             x=alt.X(f'PC_{comp1}',title=f'PC {comp1} - {explained_variance[comp1-1]*100:.2f} %'),
             y=alt.Y(f'PC_{comp2}',title=f'PC {comp2} - {explained_variance[comp2-1]*100:.2f} %'),
-            tooltip=[index_name, f"PC_{comp1}", f"PC_{comp2}"]
+            tooltip=[index_name, f"PC_{comp1}", f"PC_{comp2}"] + role_tooltip,
         )
+        if has_test_set:
+            encoding.update(color=role_color, shape=role_shape)
+        scores_plot = alt.Chart(scores.reset_index()).mark_circle().encode(**encoding)
 
     
     loadings_plot = alt.Chart(loadings).mark_circle(color='red').encode(
@@ -165,11 +210,16 @@ def biplot(scores:pd.DataFrame,
     if test_set is not None:
 
         scores_test = test_set.reset_index()
-        scatter_test = alt.Chart(scores_test).mark_point(color='black', opacity=.1).encode(
+        scores_test[role_field] = 'Phase II test'
+        test_encoding = dict(
             x=f"PC_{comp1}",
             y=f"PC_{comp2}",
-            tooltip=[index_name, f"PC_{comp1}", f"PC_{comp2}"]
+            tooltip=[index_name, f"PC_{comp1}", f"PC_{comp2}", alt.Tooltip(f'{role_field}:N', title='Data role')],
+            shape=role_shape,
         )
+        if hue is None:
+            test_encoding['color'] = role_color
+        scatter_test = alt.Chart(scores_test).mark_point(color='#E45756', opacity=.75, size=70).encode(**test_encoding)
 
         return (scatter_test + scores_plot + loadings_plot + vline + hline).interactive()
 
