@@ -574,6 +574,11 @@ def structural_variance_plot(alpha_A: pd.DataFrame, R2_A: pd.DataFrame, variable
     alt.Chart
         An interactive Altair chart showing SVI metrics for the specified variable.
     """
+    if variable_name not in alpha_A.index or variable_name not in R2_A.index:
+        raise ValueError(f"Unknown variable {variable_name!r} for SVI plotting.")
+    if not alpha_A.columns.equals(R2_A.columns):
+        raise ValueError("SVI alpha and R² matrices must use the same component columns.")
+
     # Extract the self-explanatory power for the given variable and reset the index:
     alpha_series = alpha_A.loc[variable_name].reset_index()
     alpha_series.columns = ['PC', 'alpha_value']
@@ -589,6 +594,10 @@ def structural_variance_plot(alpha_A: pd.DataFrame, R2_A: pd.DataFrame, variable
     melted_df = merged_df.melt(id_vars='PC', 
                                value_vars=['alpha_value', 'R2_value'], 
                                var_name='Metric', value_name='Value')
+    melted_df['Metric'] = melted_df['Metric'].map({
+        'alpha_value': 'Self-explanatory power α',
+        'R2_value': 'Variance explained R²',
+    })
     
     # Create a custom sort order based on the integer part of "PC".
     def extract_pc_num(pc_label):
@@ -597,18 +606,23 @@ def structural_variance_plot(alpha_A: pd.DataFrame, R2_A: pd.DataFrame, variable
 
     sorted_pcs = sorted(melted_df['PC'].unique(), key=extract_pc_num)
     
-    # Create the Altair chart with custom x-axis sort:
-    return alt.Chart(melted_df).mark_line(point=True).encode(
+    # Both measures are fractions. A fixed [0, 1] axis makes different
+    # variables directly comparable and prevents visual exaggeration.
+    lines = alt.Chart(melted_df).mark_line(point=True).encode(
         x=alt.X('PC:N', title='Principal Component', sort=sorted_pcs),
-        y=alt.Y('Value:Q', title='Explained variance'),
+        y=alt.Y('Value:Q', title='Fraction of variable variance', scale=alt.Scale(domain=[0, 1])),
         color=alt.Color('Metric:N', title='SVI Metric', 
-                        scale=alt.Scale(domain=['alpha_value', 'R2_value'],
+                        scale=alt.Scale(domain=['Self-explanatory power α', 'Variance explained R²'],
                                         range=['blue', 'orange'])),
         tooltip=[alt.Tooltip('PC:N', title='Principal Component'),
                  alt.Tooltip('Metric:N', title='Metric'),
                  alt.Tooltip('Value:Q', title='Value', format=".2f")]
-    ).properties(
-        title=f'Structural and Variance Information (SVI) for {variable_name}',
+    )
+    upper_bound = alt.Chart(pd.DataFrame({'value': [1.0]})).mark_rule(
+        strokeDash=[4, 4], color='gray'
+    ).encode(y='value:Q')
+    return (lines + upper_bound).properties(
+        title=f'SVI: structure and variance captured for {variable_name}',
         width=600,
         height=400
     ).interactive()

@@ -220,6 +220,14 @@ def compute_R2_matrix(P, X):
         A matrix of cumulative R² values with shape (M, A), where each row corresponds to a variable and each 
         column corresponds to the cumulative R² computed using the first (a+1) principal components.
     """
+    X = np.asarray(X, dtype=float)
+    P = np.asarray(P, dtype=float)
+    if X.ndim != 2 or P.ndim != 2 or X.shape[1] != P.shape[0]:
+        raise ValueError("X must have one column per row of the loading matrix P.")
+
+    # PCA is calibrated on centred data even when standardization is disabled.
+    # Centre explicitly so SVI R² is invariant to variable offsets.
+    X = X - X.mean(axis=0, keepdims=True)
     _, M = X.shape
     A = P.shape[1]  # Total number of principal components
     R2 = np.zeros((M, A))  # Initialize the result matrix
@@ -246,4 +254,4 @@ def compute_R2_matrix(P, X):
             # Calculate cumulative R² for variable m for the current number of components
             R2[m, a] = numerator / denominator if denominator != 0 else 0
 
-    return R2
+    return np.clip(R2, 0.0, 1.0)
