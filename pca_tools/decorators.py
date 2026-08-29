@@ -33,10 +33,12 @@ def require_fitted(method):
     return wrapper
 
 def cache_result(method):
-    """Decorator to cache the result of methods that are expensive to compute."""
+    """Cache only no-argument method results on an estimator instance."""
     attr_name = f"_{method.__name__}_cache"
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
+        if args or kwargs:
+            return method(self, *args, **kwargs)
         if hasattr(self, attr_name):
             return getattr(self, attr_name)
         result = method(self, *args, **kwargs)

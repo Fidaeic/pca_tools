@@ -19,11 +19,70 @@ This project builds upon the foundational work described in the following studie
 To get started with this PCA framework for MSPC, please follow the instructions below:
 
 1. Clone the repository to your local machine.
-2. Ensure that you have the required dependencies installed. A list of dependencies can be found in the `requirements.txt` file.
-3. Follow the documentation provided in the `docs` folder to understand how to train your PCA model and compute the necessary statistics.
+2. Create an environment with Python 3.10 or later.
+3. Install the package and development tools with `pip install -r requirements-dev.txt`.
 
 ## Usage
 After setting up the framework, you can begin training your PCA model and generating control charts.
+
+```python
+import pandas as pd
+from pca_tools import PCA
+
+# Rows are in-control reference observations; columns are measured variables.
+reference = pd.read_parquet("in_control_reference.parquet")
+model = PCA(n_comps=3, alpha=0.99).fit(reference)
+
+# Phase II monitoring data must have the same names and column order.
+hotelling_t2, spe, residuals, scores = model.project(new_observations)
+flags = model.predict(new_observations)
+```
+
+### Modeling conventions
+
+The implementation follows the latent-structure MSPC perspective described by
+Ferrer (2014): correlated process variables are represented in a lower-dimensional
+latent space, while departures from that space are monitored in the residual space.
+Consequently, `PCA()` chooses a component count that preserves both a residual
+subspace for SPE/DModX and the degrees of freedom needed for Phase I/II T² limits.
+Set `n_comps` explicitly when process knowledge or a validated
+component-selection procedure supports a different choice.
+
+- Hotelling's T² is evaluated from PCA score variances.
+- SPE (Q) and DModX are evaluated in the fitted PCA space. With standardization,
+  this prevents variables with larger engineering units from dominating residual alarms.
+- A full-rank model (`n_comps == n_features`) has no residual subspace. Its SPE and
+  DModX limits are reported as `NaN`, and `dmodx()` raises a clear error.
+- Input data must be numeric, finite, and match the fitted feature names and order.
+  Impute missing values before fitting or monitoring (for example, with
+  `pca_tools.pca_imputation`).
+
+### Curating a Phase I reference set
+
+`PCAOptimizer` helps curate a candidate reference data set; it does not diagnose
+or silently discard process events. By default it jointly monitors T² and SPE,
+with a Bonferroni adjustment so the requested `alpha` remains the family-wise
+confidence level. `max_outlier_fraction` is an explicit curation policy and is
+separate from that chart confidence.
+
+```python
+from pca_tools import PCAOptimizer
+
+optimizer = PCAOptimizer(
+    n_comps=3,
+    alpha=0.99,
+    statistic="both",
+    max_outlier_fraction=0.02,
+    drop_percentage=0.20,
+)
+in_control = optimizer.optimize(candidate_reference)
+
+# Retain the audit trail for process review and reproducibility.
+audit = optimizer.result_
+removed = audit.removed_data
+history = audit.history
+phase_ii_model = audit.model
+```
 
 ### Phase I
 
