@@ -7,7 +7,7 @@ name = "pca-tools"
 version = "0.2.12"
 description = "Latent-structure PCA tools for multivariate statistical process control"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = {file = "LICENSE"}
 authors = [{name = "Fidae El Morer", email = "elmorer.fidae@gmail.com"}]
 classifiers = [
