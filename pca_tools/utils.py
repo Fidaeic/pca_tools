@@ -117,18 +117,20 @@ def column_wise_k_fold_pca_cv(data: pd.DataFrame,
     Perform column-wise k-fold (CKF) cross-validation to select the optimal number of principal components,
     with an early stopping mechanism based on the relative improvement of PRESS between consecutive runs.
     
-    In this approach, the columns of the data are partitioned into n_splits groups. For each group,
-    the PCA model is trained on the remaining columns, and then the left-out columns are predicted via
-    linear regression on the PCA scores. The reconstruction error for the left-out columns is computed
-    as the Prediction Error Sum of Squares (PRESS). Instead of testing all possible components, the algorithm
-    stops early if the relative improvement between consecutive candidate runs falls below improvement_tol.
+    In this approach, the columns are partitioned into ``n_splits`` groups. For each group,
+    PCA is fitted to the remaining columns and the left-out columns are predicted by least-squares
+    regression on the PCA scores. The prediction error sum of squares (PRESS) is summed across
+    folds. Candidate component counts are limited by the smallest training fold, so every fold is
+    feasible. Evaluation stops when the relative PRESS improvement is below ``improvement_tol``;
+    in that case the preceding (more parsimonious) count is selected.
     
     Parameters
     ----------
     data : pd.DataFrame
-        Input data for PCA cross-validation. Rows with any missing values are dropped.
+        Numeric input data. Rows with missing values are excluded from the calculation.
     max_components : int, optional
-        Maximum number of principal components to test. If None, uses the number of columns.
+        Maximum number of principal components to test. If None, uses the maximum feasible count
+        for every fold.
     n_splits : int, optional
         Number of column-wise folds (default is 5).
     improvement_tol : float, optional
@@ -144,7 +146,7 @@ def column_wise_k_fold_pca_cv(data: pd.DataFrame,
     Raises
     ------
     ValueError
-        If the input data does not have enough columns.
+        If the data or cross-validation configuration is not suitable for PCA.
     
     Example
     -------
@@ -154,10 +156,30 @@ def column_wise_k_fold_pca_cv(data: pd.DataFrame,
     >>> print(optimal)
     3
     """
+    if not isinstance(data, pd.DataFrame):
+        raise TypeError("data must be a pandas DataFrame.")
+    if data.empty:
+        raise ValueError("data must contain at least one row and one column.")
+    if not all(pd.api.types.is_numeric_dtype(dtype) for dtype in data.dtypes):
+        raise ValueError("data must contain only numeric columns.")
+    values = data.to_numpy(dtype=float, na_value=np.nan)
+    if np.isinf(values).any():
+        raise ValueError("data must not contain infinite values.")
+    if isinstance(n_splits, bool) or not isinstance(n_splits, (int, np.integer)):
+        raise ValueError("n_splits must be an integer.")
+    if not 2 <= n_splits <= data.shape[1]:
+        raise ValueError("n_splits must be between 2 and the number of columns.")
+    if (
+        not isinstance(improvement_tol, (int, float, np.number))
+        or not np.isfinite(improvement_tol)
+        or improvement_tol < 0
+    ):
+        raise ValueError("improvement_tol must be a finite, non-negative number.")
+
     # Drop rows with missing values to ensure PCA can be applied.
-    df = data.copy().dropna(axis=0)
-    if df.shape[1] < n_splits:
-        raise ValueError("Number of splits exceeds number of columns in data.")
+    df = data.dropna(axis=0)
+    if len(df) < 2:
+        raise ValueError("data must contain at least two complete rows.")
     
     # Standardize the data.
     scaler = StandardScaler()
@@ -167,7 +189,20 @@ def column_wise_k_fold_pca_cv(data: pd.DataFrame,
     # Split column indices into n_splits groups.
     col_indices = np.array_split(np.arange(num_cols), n_splits)
 
-    max_components = max_components or num_cols
+    # Every candidate must fit in every training fold.  The largest held-out
+    # group determines the smallest number of training columns.
+    max_feasible_components = min(len(df), num_cols - max(len(group) for group in col_indices))
+    if max_components is None:
+        max_components = max_feasible_components
+    elif (
+        isinstance(max_components, bool)
+        or not isinstance(max_components, (int, np.integer))
+        or not 1 <= max_components <= max_feasible_components
+    ):
+        raise ValueError(
+            "max_components must be an integer between 1 and "
+            f"{max_feasible_components} for this data and n_splits."
+        )
     press_scores = []
 
     optimal_components = max_components  # Default to max_components if early stopping never triggers.
@@ -199,7 +234,8 @@ def column_wise_k_fold_pca_cv(data: pd.DataFrame,
         # If not the first candidate, check relative improvement.
         if n_components > 1:
             improvement = press_scores[-2] - press_scores[-1]
-            rel_improvement = improvement / press_scores[-2]
+            previous_press = press_scores[-2]
+            rel_improvement = improvement / max(abs(previous_press), np.finfo(float).eps)
             if rel_improvement < improvement_tol:
                 optimal_components = n_components - 1
                 # Optional: break early here if further improvement is negligible.

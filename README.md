@@ -2,25 +2,31 @@
 
 This repository is dedicated to the development of a comprehensive Principal Component Analysis (PCA) framework specifically designed for Multivariate Statistical Process Control (MSPC). The primary goal of this framework is to provide a robust set of tools that enable users to effectively train PCA models and compute critical statistics, namely Hotelling's T^2 and the Squared Prediction Error (SPE), which are essential for anomaly detection in dynamic processes.
 
-This project builds upon the foundational work described in the following studies:
-
-- Ferrer, A. (2007). Multivariate statistical process control based on principal component analysis (MSPC-PCA): Some reflections and a case study in an autobody assembly process. Quality Engineering, 19(4), 311-325.
-
-- Ferrer, A. (2014). Latent structures-based multivariate statistical process control: A paradigm shift. Quality Engineering, 26(1), 72-91.
+The modelling and interpretation conventions are informed by the literature listed in
+[References](#references).
 
 ## Features
 
 - **PCA Model Training**: Offers a streamlined process for training PCA models tailored for MSPC, ensuring that the models capture the essential variance within the process data.
 - **Computation of Key Statistics**: Implements efficient algorithms to compute Hotelling's T^2 and SPE statistics, which are pivotal for monitoring the health of the process.
 - **Control Charts**: Utilizes the computed statistics to generate control charts, a fundamental component in MSPC for visualizing and detecting deviations from normal process behavior.
+- **Data Utilities**: Provides PCA-based missing-value imputation and column-wise cross-validation for component selection.
 
 ## Getting Started
 
 To get started with this PCA framework for MSPC, please follow the instructions below:
 
 1. Clone the repository to your local machine.
-2. Create an environment with Python 3.10 or later.
-3. Install the package and development tools with `pip install -r requirements-dev.txt`.
+2. Create an environment with Python 3.11 or later.
+3. Install either the package alone or the package with its development dependencies:
+
+   ```bash
+   # Package only
+   pip install -e .
+
+   # Package plus test and release tools
+   pip install -e ".[dev]"
+   ```
 
 ## Usage
 After setting up the framework, you can begin training your PCA model and generating control charts.
@@ -56,6 +62,53 @@ component-selection procedure supports a different choice.
 - Input data must be numeric, finite, and match the fitted feature names and order.
   Impute missing values before fitting or monitoring (for example, with
   `pca_tools.pca_imputation`).
+
+### Missing-data imputation and component selection
+
+`pca_imputation` uses iterative PCA reconstruction (Total Statistical
+Reconstruction) to estimate missing values from correlations between variables.
+It preserves observed values, requires numeric finite data, and raises an error
+when an entire column is missing because no information is available to estimate
+it. Choose `n_components` using process knowledge or validation; retaining every
+component reconstructs the mean-filled initial data and generally offers no
+low-rank imputation benefit.
+
+```python
+from pca_tools import pca_imputation
+
+imputed_reference = pca_imputation(reference_with_gaps, n_components=3)
+```
+
+`column_wise_k_fold_pca_cv` selects a parsimonious component count by fitting
+PCA to groups of observed variables and predicting held-out groups from the
+scores. It standardizes variables internally and drops incomplete rows. Use
+complete Phase I reference data where practical; otherwise decide and document
+an imputation policy before selection. The maximum candidate count must fit the
+smallest training fold.
+
+```python
+from pca_tools import column_wise_k_fold_pca_cv
+
+n_components, press_scores = column_wise_k_fold_pca_cv(
+    imputed_reference,
+    n_splits=5,
+    improvement_tol=0.01,
+)
+model = PCA(n_comps=n_components, alpha=0.99).fit(imputed_reference)
+```
+
+### Example notebooks
+
+The [`examples/`](examples/) directory contains runnable notebooks:
+
+- [`pca_example.ipynb`](examples/pca_example.ipynb) reproduces the pipe-mixing
+  PCA/SVI example of Camacho, Picó, and Ferrer.
+- [`pca_imputation_example.ipynb`](examples/pca_imputation_example.ipynb) shows
+  iterative PCA-based imputation on a controlled low-rank data set.
+- [`column_wise_k_fold_pca_cv_example.ipynb`](examples/column_wise_k_fold_pca_cv_example.ipynb)
+  demonstrates column-wise cross-validation and PRESS-based component selection.
+- [`optimization_example.ipynb`](examples/optimization_example.ipynb) demonstrates
+  Phase I reference-set curation with `PCAOptimizer`.
 
 ### Curating a Phase I reference set
 
@@ -121,3 +174,17 @@ After the optimization carried out during Phase I and the calibration and diagno
 ## License
 
 This project is licensed under the MIT License - see the `LICENSE` file for details.
+
+## References
+
+- Camacho, J., Picó, J., & Ferrer, A. (2010). Data understanding with PCA:
+  Structural and Variance Information plots. *Chemometrics and Intelligent
+  Laboratory Systems, 100*(1), 48–56.
+  [https://doi.org/10.1016/j.chemolab.2009.10.005](https://doi.org/10.1016/j.chemolab.2009.10.005)
+- Ferrer, A. (2007). Multivariate statistical process control based on principal
+  component analysis (MSPC-PCA): Some reflections and a case study in an autobody
+  assembly process. *Quality Engineering, 19*(4), 311–325.
+  [https://doi.org/10.1080/08982110701621304](https://doi.org/10.1080/08982110701621304)
+- Ferrer, A. (2014). Latent structures-based multivariate statistical process
+  control: A paradigm shift. *Quality Engineering, 26*(1), 72–91.
+  [https://doi.org/10.1080/08982112.2013.846093](https://doi.org/10.1080/08982112.2013.846093)

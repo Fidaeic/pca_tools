@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pca_tools import pca_imputation
+from pca_tools import column_wise_k_fold_pca_cv, pca_imputation
 
 
 def test_pca_imputation_preserves_observations_and_imputes_missing_values():
@@ -28,3 +28,22 @@ def test_pca_imputation_rejects_a_column_without_observations():
 
     with pytest.raises(ValueError, match="no observed values"):
         pca_imputation(data, n_components=1)
+
+
+def test_column_wise_cv_caps_default_components_to_the_smallest_training_fold():
+    rng = np.random.default_rng(7)
+    latent = rng.normal(size=(30, 2))
+    data = pd.DataFrame(latent @ rng.normal(size=(2, 5)))
+
+    optimal, press_scores = column_wise_k_fold_pca_cv(data, n_splits=3)
+
+    assert 1 <= optimal <= 3
+    assert 1 <= len(press_scores) <= 3
+    assert np.isfinite(press_scores).all()
+
+
+def test_column_wise_cv_rejects_infeasible_component_count():
+    data = pd.DataFrame(np.arange(30, dtype=float).reshape(6, 5))
+
+    with pytest.raises(ValueError, match="max_components"):
+        column_wise_k_fold_pca_cv(data, n_splits=3, max_components=4)
