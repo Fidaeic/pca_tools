@@ -143,7 +143,8 @@ class PCA(BaseEstimator, TransformerMixin):
         self._loadings = pd.DataFrame(self.model.components_.T, columns=[f"PC_{i+1}" for i in range(self._ncomps)], index=self._variables)
         self._scores = pd.DataFrame(self.model.transform(X), columns=[f"PC_{i+1}" for i in range(self._ncomps)], index=self._index)
 
-    def _calculate_metrics(self, data: pd.DataFrame):
+    def _calculate_monitoring_metrics(self, data: pd.DataFrame):
+        """Compute the quantities required for Phase I/II monitoring."""
         self._explained_variance = self.model.explained_variance_ratio_
         self._rsquared_acc = np.cumsum(self.model.explained_variance_ratio_)
         # sklearn's explained_variance_ uses the sample covariance convention
@@ -152,6 +153,10 @@ class PCA(BaseEstimator, TransformerMixin):
         _, self._residuals_fit = self.spe(data)
         self._mean_train = np.mean(data.values, axis=0)
         self._std_train = np.std(data.values, axis=0)
+
+    def _calculate_metrics(self, data: pd.DataFrame):
+        """Compute monitoring metrics plus optional diagnostic/plotting metrics."""
+        self._calculate_monitoring_metrics(data)
 
         reconstructed = self.inverse_transform(self.transform(data))
         self._total_sum_squares = np.sum((data-self._mean_train) ** 2, axis=0)
@@ -218,7 +223,7 @@ class PCA(BaseEstimator, TransformerMixin):
         return Q_A, alpha_A, R2_A
 
     @validate_dataframe('data')
-    def fit(self, data, y=None):
+    def fit(self, data, y=None, compute_diagnostics: bool = True):
         """
         Fit the PCA model using the provided training data.
     
@@ -247,17 +252,27 @@ class PCA(BaseEstimator, TransformerMixin):
             
             self._scaler.fit(data[self._numerical_features])
     
-        self.train(data)
+        self.train(data, compute_diagnostics=compute_diagnostics)
     
         self._spe, _ = self.spe(data)
         self._hotelling = self.hotelling_t2(data)
         self._dmodx = (
             self.dmodx(data)
-            if self._ncomps < self._nvars
+            if compute_diagnostics and self._ncomps < self._nvars
             else np.full(self._nobs, np.nan)
         )
     
         self._hotelling_limit_p1, self._hotelling_limit_p2, self._spe_limit, self._dmodx_limit = self.control_limits(alpha=self._alpha)
+        self.phase1_statistics_ = {
+            'T2': np.asarray(self._hotelling),
+            'SPE': np.asarray(self._spe),
+        }
+        self.control_limits_ = {
+            'T2_phase1': self._hotelling_limit_p1,
+            'T2_phase2': self._hotelling_limit_p2,
+            'SPE': self._spe_limit,
+            'DModX': self._dmodx_limit,
+        }
         
         return self
 
@@ -280,7 +295,7 @@ class PCA(BaseEstimator, TransformerMixin):
         return preprocess(data, self._scaler, self._numerical_features)
     
     @validate_dataframe('data')
-    def train(self, data: pd.DataFrame):
+    def train(self, data: pd.DataFrame, compute_diagnostics: bool = True):
         '''
         Trains the PCA model using the provided dataset.
 
@@ -316,7 +331,10 @@ class PCA(BaseEstimator, TransformerMixin):
         self._validate_feature_schema(data)
         X = self._preprocess_data(data)
         self._fit_model(X)
-        self._calculate_metrics(data)
+        if compute_diagnostics:
+            self._calculate_metrics(data)
+        else:
+            self._calculate_monitoring_metrics(data)
 
     @validate_dataframe('data')
     @require_fitted

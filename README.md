@@ -57,6 +57,33 @@ component-selection procedure supports a different choice.
   Impute missing values before fitting or monitoring (for example, with
   `pca_tools.pca_imputation`).
 
+### Curating a Phase I reference set
+
+`PCAOptimizer` helps curate a candidate reference data set; it does not diagnose
+or silently discard process events. By default it jointly monitors T² and SPE,
+with a Bonferroni adjustment so the requested `alpha` remains the family-wise
+confidence level. `max_outlier_fraction` is an explicit curation policy and is
+separate from that chart confidence.
+
+```python
+from pca_tools import PCAOptimizer
+
+optimizer = PCAOptimizer(
+    n_comps=3,
+    alpha=0.99,
+    statistic="both",
+    max_outlier_fraction=0.02,
+    drop_percentage=0.20,
+)
+in_control = optimizer.optimize(candidate_reference)
+
+# Retain the audit trail for process review and reproducibility.
+audit = optimizer.result_
+removed = audit.removed_data
+history = audit.history
+phase_ii_model = audit.model
+```
+
 ### Phase I
 
 Phase I of the PCA framework for Multivariate Statistical Process Control (MSPC) is designed as the foundational step in establishing a robust process monitoring system. This phase encompasses the initial setup and calibration of the PCA model using historical process data, which is presumed to be reflective of the process under normal operating conditions. Here's a detailed breakdown of how Phase I works:
