@@ -99,15 +99,15 @@ model = PCA(n_comps=n_components, alpha=0.99).fit(imputed_reference)
 
 ### Example notebooks
 
-The [`examples/`](examples/) directory contains runnable notebooks:
+The [`example/`](example/) directory contains runnable notebooks:
 
-- [`pca_example.ipynb`](examples/pca_example.ipynb) reproduces the pipe-mixing
+- [`pca_example.ipynb`](example/pca_example.ipynb) reproduces the pipe-mixing
   PCA/SVI example of Camacho, Picó, and Ferrer.
-- [`pca_imputation_example.ipynb`](examples/pca_imputation_example.ipynb) shows
+- [`pca_imputation_example.ipynb`](example/pca_imputation_example.ipynb) shows
   iterative PCA-based imputation on a controlled low-rank data set.
-- [`column_wise_k_fold_pca_cv_example.ipynb`](examples/column_wise_k_fold_pca_cv_example.ipynb)
+- [`column_wise_k_fold_pca_cv_example.ipynb`](example/column_wise_k_fold_pca_cv_example.ipynb)
   demonstrates column-wise cross-validation and PRESS-based component selection.
-- [`optimization_example.ipynb`](examples/optimization_example.ipynb) demonstrates
+- [`optimization_example.ipynb`](example/optimization_example.ipynb) demonstrates
   Phase I reference-set curation with `PCAOptimizer`.
 
 ### Curating a Phase I reference set
