@@ -166,7 +166,14 @@ class PCA(BaseEstimator, TransformerMixin):
         # The svi_metrics method returns a tuple: (Q_A, alpha_A, R2_A).
         # Q_A (cross-product matrix) is not used in the plot.
         self._Q_A, self._alpha_A, self._R2_A = self.svi_metrics(data)
+        self.svi_ = {
+            'projection': self._Q_A,
+            'self_explanatory_power': self._alpha_A,
+            'R2': self._R2_A,
+        }
 
+    @require_fitted
+    @validate_dataframe('data')
     def svi_metrics(self, data: pd.DataFrame):
         """
         Compute Structural Variance Information (SVI) metrics for the PCA model.
@@ -195,6 +202,7 @@ class PCA(BaseEstimator, TransformerMixin):
               - R2_A: A DataFrame with the cumulative explained variance for each principal component,
                       indexed by 'PC1', 'PC2', …, with a single column 'R2'.
         """
+        self._validate_feature_schema(data)
         # P: DataFrame of loadings (features x components)
         P = self._loadings
         X = self._preprocess_data(data.copy())
@@ -207,7 +215,7 @@ class PCA(BaseEstimator, TransformerMixin):
         for comp in range(self._ncomps):
             # Compute the cross-product for loadings up to current component (comp+1)
             Q_A = P.values[:, :comp+1] @ P.values[:, :comp+1].T
-            alpha_A[:, comp] = np.diag(Q_A)
+            alpha_A[:, comp] = np.clip(np.diag(Q_A), 0.0, 1.0)
             
         # Convert the alpha_A matrix into a DataFrame with appropriate row and column labels.
         alpha_A = pd.DataFrame(alpha_A, index=P.index,
@@ -1574,6 +1582,11 @@ class PCA(BaseEstimator, TransformerMixin):
         - The structural_variance_plot function handles the details of data merging, ordering of components,
           and the creation of an interactive Altair plot.
         """    
+        if not hasattr(self, '_alpha_A'):
+            raise ValueError("SVI diagnostics were not computed; fit with compute_diagnostics=True.")
+        if variable_name not in self._alpha_A.index:
+            raise ValueError(f"Unknown variable {variable_name!r}; choose one of {self._alpha_A.index.tolist()}.")
+
         # Generate and return the structural variance plot for the specified variable.
         # This function creates an interactive Altair chart showing SVI metrics.
         return structural_variance_plot(self._alpha_A, self._R2_A, variable_name)
