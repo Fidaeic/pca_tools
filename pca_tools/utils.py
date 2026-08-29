@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from scipy.stats import f, beta, chi2
 from sklearn.decomposition import PCA as PCA_sk
 from sklearn.preprocessing import StandardScaler

@@ -28,9 +28,11 @@ def score_plot(scores:pd.DataFrame,
         # Reset the index of the scores DataFrame
         scores = scores.reset_index()
         
-        # Create horizontal and vertical lines at y=0 and x=0 respectively
-        hline = alt.Chart(pd.DataFrame({'y': [0]})).mark_rule(strokeDash=[12, 6]).encode(y='y').interactive()
-        vline = alt.Chart(pd.DataFrame({'x': [0]})).mark_rule(strokeDash=[12, 6]).encode(x='x').interactive()
+        # Apply a single pan/zoom parameter to the composed chart below.  Giving
+        # each layer ``.interactive()`` creates duplicate generated parameters
+        # in Altair/Vega and fails at JavaScript compilation time.
+        hline = alt.Chart(pd.DataFrame({'y': [0]})).mark_rule(strokeDash=[12, 6]).encode(y='y')
+        vline = alt.Chart(pd.DataFrame({'x': [0]})).mark_rule(strokeDash=[12, 6]).encode(x='x')
         
         # Check if hue is provided
         if hue is not None:
@@ -47,7 +49,7 @@ def score_plot(scores:pd.DataFrame,
                 y=alt.Y(f'PC_{comp2}',title=f'PC {comp2} - {explained_variance[comp2-1]*100:.2f} %'),
                 tooltip=[f"PC_{comp1}", f"PC_{comp2}", hue.name],
                 color=alt.Color(hue.name)
-            ).interactive()
+            )
         
         else:
             # Create a scatter plot without color encoding
@@ -55,7 +57,7 @@ def score_plot(scores:pd.DataFrame,
                 x=alt.X(f'PC_{comp1}',title=f'PC {comp1} - {explained_variance[comp1-1]*100:.2f} %'),
                 y=alt.Y(f'PC_{comp2}',title=f'PC {comp2} - {explained_variance[comp2-1]*100:.2f} %'),
                 tooltip=[index_name, f"PC_{comp1}", f"PC_{comp2}"]
-            ).interactive()
+            )
         
         # Check if test_set is provided
         if test_set is not None:
@@ -67,13 +69,13 @@ def score_plot(scores:pd.DataFrame,
                 x=f"PC_{comp1}",
                 y=f"PC_{comp2}",
                 tooltip=[index_name, f"PC_{comp1}", f"PC_{comp2}"]
-            ).interactive()
+            )
         
             # Return the combined plot of test set, scores, and lines
-            return (scatter_test + scatter + vline + hline)
+            return (scatter_test + scatter + vline + hline).interactive()
         
         # Return the combined plot of scores and lines
-        return (scatter + vline + hline)
+        return (scatter + vline + hline).interactive()
 
 
 def biplot(scores:pd.DataFrame, 
@@ -141,14 +143,14 @@ def biplot(scores:pd.DataFrame,
             y=alt.Y(f'PC_{comp2}',title=f'PC {comp2} - {explained_variance[comp2-1]*100:.2f} %'),
             tooltip=[index_name, f"PC_{comp1}", f"PC_{comp2}", hue.name],
             color=alt.Color(hue.name)
-        ).interactive()
+        )
 
     else:
         scores_plot = alt.Chart(scores.reset_index()).mark_circle().encode(
             x=alt.X(f'PC_{comp1}',title=f'PC {comp1} - {explained_variance[comp1-1]*100:.2f} %'),
             y=alt.Y(f'PC_{comp2}',title=f'PC {comp2} - {explained_variance[comp2-1]*100:.2f} %'),
             tooltip=[index_name, f"PC_{comp1}", f"PC_{comp2}"]
-        ).interactive()
+        )
 
     
     loadings_plot = alt.Chart(loadings).mark_circle(color='red').encode(
@@ -167,11 +169,11 @@ def biplot(scores:pd.DataFrame,
             x=f"PC_{comp1}",
             y=f"PC_{comp2}",
             tooltip=[index_name, f"PC_{comp1}", f"PC_{comp2}"]
-        ).interactive()
+        )
 
-        return (scatter_test + scores_plot + loadings_plot + vline + hline)
+        return (scatter_test + scores_plot + loadings_plot + vline + hline).interactive()
 
-    return (scores_plot + loadings_plot+ vline + hline)
+    return (scores_plot + loadings_plot + vline + hline).interactive()
 
 def loadings_barplot(loadings: pd.DataFrame, explained_variance: np.ndarray, comp: int):
     '''

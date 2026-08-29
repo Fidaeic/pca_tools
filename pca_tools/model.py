@@ -99,11 +99,16 @@ class PCA(BaseEstimator, TransformerMixin):
     
     def _validate_ncomps(self, data: pd.DataFrame):
         if self._ncomps is None:
-            self._ncomps = data.shape[1]
+            # MSPC needs a residual subspace for SPE/DModX.  Retaining every
+            # available component produces a perfect reconstruction and makes
+            # those charts undefined rather than informative.
+            # Phase-I/II T² limits additionally require n > A + 1.
+            self._ncomps = min(data.shape[0] - 2, data.shape[1] - 1)
 
         max_components = min(data.shape)
         if self._ncomps <= 0 or self._ncomps > max_components:
             raise NComponentsError(max_components)
+        self.model.set_params(n_components=self._ncomps)
 
     def _validate_feature_schema(self, data: pd.DataFrame) -> None:
         """Require the exact feature schema learned during fitting."""
@@ -141,8 +146,10 @@ class PCA(BaseEstimator, TransformerMixin):
     def _calculate_metrics(self, data: pd.DataFrame):
         self._explained_variance = self.model.explained_variance_ratio_
         self._rsquared_acc = np.cumsum(self.model.explained_variance_ratio_)
-        self._eigenvals = np.var(self._scores.values, axis=0)
-        self._residuals_fit = data - self._scores @ self._loadings.T
+        # sklearn's explained_variance_ uses the sample covariance convention
+        # required by the T² statistic (n - 1 degrees of freedom).
+        self._eigenvals = self.model.explained_variance_
+        _, self._residuals_fit = self.spe(data)
         self._mean_train = np.mean(data.values, axis=0)
         self._std_train = np.std(data.values, axis=0)
 
@@ -244,7 +251,11 @@ class PCA(BaseEstimator, TransformerMixin):
     
         self._spe, _ = self.spe(data)
         self._hotelling = self.hotelling_t2(data)
-        self._dmodx = self.dmodx(data)
+        self._dmodx = (
+            self.dmodx(data)
+            if self._ncomps < self._nvars
+            else np.full(self._nobs, np.nan)
+        )
     
         self._hotelling_limit_p1, self._hotelling_limit_p2, self._spe_limit, self._dmodx_limit = self.control_limits(alpha=self._alpha)
         
@@ -456,6 +467,14 @@ class PCA(BaseEstimator, TransformerMixin):
         - DModX is a measure of the absolute distance to the model
         - Limits are derived from the beta, F-, and chi-squared distributions, adjusted for sample size and number of components.
         """
+        if not 0 < alpha < 1:
+            raise ValueError("Alpha must be strictly between 0 and 1.")
+        if self._nobs <= self._ncomps + 1:
+            raise ValueError(
+                "At least n_components + 2 in-control observations are required "
+                "to estimate Phase I and Phase II T² limits."
+            )
+
         # Phase I: Hotelling's T2 control limit
         # Degrees of freedom for beta distribution approximation
         dfn_phase1 = self._ncomps / 2
@@ -473,10 +492,20 @@ class PCA(BaseEstimator, TransformerMixin):
         mean_spe = np.mean(self._spe)
         var_spe = np.var(self._spe)
 
-        # Calculate degrees of freedom based on SPE moments
-        df_spe = (2 * mean_spe ** 2) / var_spe if var_spe != 0 else 1  # safeguard against division by zero
-        constant_spe = var_spe / (2 * mean_spe) if mean_spe != 0 else 1
-        spe_limit = chi2.ppf(alpha, df_spe) * constant_spe
+        # Residual-space statistics are unavailable for a full-rank model.
+        # NaN is intentional: an arbitrary fallback threshold is statistically
+        # misleading and hides that no residual subspace exists.
+        if self._ncomps >= self._nvars:
+            return hotelling_limit_p1, hotelling_limit_p2, np.nan, np.nan
+
+        # Moment-matched chi-square limit for SPE.  A zero-residual training
+        # set has a zero limit: any non-zero residual is then a deviation.
+        if mean_spe == 0 or var_spe == 0:
+            spe_limit = 0.0
+        else:
+            df_spe = (2 * mean_spe ** 2) / var_spe
+            constant_spe = var_spe / (2 * mean_spe)
+            spe_limit = chi2.ppf(alpha, df_spe) * constant_spe
 
         # DMODX control limit
         m = self._nobs
@@ -526,7 +555,7 @@ class PCA(BaseEstimator, TransformerMixin):
     
     @validate_dataframe('data')
     @require_fitted
-    def spe(self, data: pd.DataFrame) -> tuple[list[float], np.ndarray]:
+    def spe(self, data: pd.DataFrame) -> tuple[list[float], pd.DataFrame]:
         """
         Computes the Squared Prediction Error (SPE) statistic for every observation in the given data.
     
@@ -548,13 +577,13 @@ class PCA(BaseEstimator, TransformerMixin):
                 - A list of SPE values for each observation.
                 - A NumPy array of residuals (differences between the original data and its reconstruction).
         """
-        # Create a copy of the data to avoid modifying the original DataFrame.
+        # Q/SPE is measured in the PCA modelling space.  When standardization
+        # is enabled, calculating it back in engineering units would let the
+        # largest-unit variable dominate the statistic.
         X_transform = data.copy()
-    
-        # Reconstruct the data from the PCA scores by multiplying with the transpose of the loadings matrix.
-        reconstruction = self.inverse_transform(self.transform(data))
-    
-        # Calculate the residuals: difference between original data and its reconstruction.
+        if self._standardize:
+            X_transform = self.preprocess(X_transform)
+        reconstruction = self.transform(data) @ self._loadings.T
         residuals = X_transform - reconstruction
     
         # Calculate the SPE for each observation as the sum of squared residuals.
@@ -950,6 +979,9 @@ class PCA(BaseEstimator, TransformerMixin):
             s₀ = sqrt( Sum_{i,j}(residuals^2) / ((m - A - 1) * (K - A)) )
         """
         
+        if self._ncomps >= self._nvars:
+            raise ValueError("DModX is unavailable when all feature-space components are retained.")
+
         # Calculate the Squared Prediction Error (SPE) and obtain the residuals.
         SPE, residuals = self.spe(data)
     
@@ -961,7 +993,10 @@ class PCA(BaseEstimator, TransformerMixin):
     
         if normalize:
             s_0 = np.sqrt(np.sum(residuals.values**2) / ((m - A - 1) * (K - A)))
-            dmodx_values = dmodx_values / s_0
+            if s_0 == 0:
+                dmodx_values = np.where(dmodx_values == 0, 0.0, np.inf)
+            else:
+                dmodx_values = dmodx_values / s_0
     
         return dmodx_values
 
@@ -990,14 +1025,16 @@ class PCA(BaseEstimator, TransformerMixin):
         -------
         None
         '''       
-        if comp1 <= 0 or comp1>self._nvars or comp2 <= 0 or comp2>self._nvars:
-            raise NComponentsError(self._nvars)
+        if comp1 <= 0 or comp1 > self._ncomps or comp2 <= 0 or comp2 > self._ncomps:
+            raise NComponentsError(self._ncomps)
         
         if test_set is not None:
 
             test_set = self.transform(test_set)
 
-        return score_plot(scores=self._scores, comp1=comp1, comp2=comp2, explained_variance=self._explained_variance, hue=hue, index_name=self._index_name, test_set=test_set)
+        return score_plot(scores=self._scores, comp1=comp1, comp2=comp2,
+                          explained_variance=self._explained_variance, hue=hue,
+                          index_name=self._index_name or 'index', test_set=test_set)
     
     @require_fitted
     def biplot(self, comp1:int, comp2:int, hue:pd.Series=None, test_set:pd.DataFrame=None):
@@ -1019,14 +1056,16 @@ class PCA(BaseEstimator, TransformerMixin):
         -------
         None
         '''
-        if comp1 <= 0 or comp1>self._ncomps or comp2 <= 0 or comp2>self._ncomps:
-            raise NComponentsError(self._nvars)
+        if comp1 <= 0 or comp1 > self._ncomps or comp2 <= 0 or comp2 > self._ncomps:
+            raise NComponentsError(self._ncomps)
         
         if test_set is not None:
 
             test_set = self.transform(test_set)
     
-        return biplot(scores=self._scores, loadings=self._loadings, comp1=comp1, comp2=comp2, explained_variance=self._explained_variance, hue=hue, index_name=self._index_name, test_set=test_set)
+        return biplot(scores=self._scores, loadings=self._loadings, comp1=comp1,
+                      comp2=comp2, explained_variance=self._explained_variance,
+                      hue=hue, index_name=self._index_name or 'index', test_set=test_set)
     
     @require_fitted
     def loadings_barplot(self, comp:int):
