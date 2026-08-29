@@ -40,6 +40,34 @@ def pca_imputation(data: pd.DataFrame,
     >>> imputed = pca_imputation(data, n_components=1)
     >>> print(imputed)
     """
+    if not isinstance(data, pd.DataFrame):
+        raise TypeError("data must be a pandas DataFrame.")
+    if data.empty:
+        raise ValueError("data must contain at least one row and one column.")
+    if not all(pd.api.types.is_numeric_dtype(dtype) for dtype in data.dtypes):
+        raise ValueError("data must contain only numeric columns.")
+    values = data.to_numpy(dtype=float, na_value=np.nan)
+    if np.isinf(values).any():
+        raise ValueError("data must not contain infinite values.")
+    if data.isna().all(axis=0).any():
+        columns = data.columns[data.isna().all(axis=0)].tolist()
+        raise ValueError(f"Cannot impute columns with no observed values: {columns}.")
+    if isinstance(max_iter, bool) or not isinstance(max_iter, (int, np.integer)) or max_iter < 0:
+        raise ValueError("max_iter must be a non-negative integer.")
+    if not isinstance(tol, (int, float, np.number)) or not np.isfinite(tol) or tol < 0:
+        raise ValueError("tol must be a finite, non-negative number.")
+
+    max_valid_components = min(data.shape)
+    if n_components is not None and (
+        isinstance(n_components, bool)
+        or not isinstance(n_components, (int, np.integer))
+        or not 1 <= n_components <= max_valid_components
+    ):
+        raise ValueError(
+            "n_components must be an integer between 1 and "
+            f"min(n_samples, n_features) ({max_valid_components})."
+        )
+
     # Make a copy of the original data and identify missing locations.
     df = data.copy()
     missing_mask = df.isna()
@@ -72,13 +100,14 @@ def pca_imputation(data: pd.DataFrame,
 
         # Check convergence based on the norm difference in standardized data.
         diff_norm = np.linalg.norm(df_filled_new_scaled - df_filled_scaled)
+        # Store the latest estimate before returning on convergence.  Otherwise
+        # the final update would be silently omitted from the result.
+        df_filled = df_filled_new
+        df_filled_scaled = df_filled_new_scaled
         if diff_norm < tol:
             break
 
-        df_filled = df_filled_new
-        df_filled_scaled = df_filled_new_scaled
-
-    return pd.DataFrame(df_filled, columns=df.columns, index=df.index)
+    return df_filled
 
 def column_wise_k_fold_pca_cv(data: pd.DataFrame, 
                               max_components: int | None = None, 
