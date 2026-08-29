@@ -50,5 +50,5 @@ def test_project_method(sample_data):
     # Validate the types of the outputs
     assert isinstance(hotelling_t2, list), "Hotelling's T2 should be a list"
     assert isinstance(spe_p2, list), "SPE should be a list"
-    assert isinstance(residuals, np.ndarray), "Residuals should be an np.ndarray"
+    assert isinstance(residuals, pd.DataFrame), "Residuals should preserve feature labels in a DataFrame"
     assert isinstance(predicted_scores, pd.DataFrame), "Predicted scores should be a pd.DataFrame"

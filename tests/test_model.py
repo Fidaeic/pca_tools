@@ -5,7 +5,7 @@ from pca_tools.model import PCA  # Replace with the actual import
 from pandas.testing import assert_frame_equal
 
 def test_train(sample_data):
-    pca = PCA(n_comps=2, standardize=True, tolerance=0.001, verbose=False)
+    pca = PCA(n_comps=2, standardize=True, tolerance=0.001)
     pca.fit(sample_data)
 
     # Check if the model has been fitted

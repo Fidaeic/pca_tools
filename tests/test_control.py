@@ -6,7 +6,7 @@ from pca_tools.model import PCA
 def test_control_limits(sample_data):
     # Setup
     alpha = 0.95
-    pca_model = PCA()
+    pca_model = PCA(n_comps=2)
     pca_model.fit(sample_data)  # Assuming the PCA class has a fit method that sets necessary attributes
 
     # Action
@@ -29,12 +29,12 @@ def test_anomalies(sample_data):
 
     sample_data.iloc[anomalous_observation, :] = sample_data.iloc[anomalous_observation, :] * 1000  # Introduce an anomaly
     # Setup
-    pca_model = PCA()
+    pca_model = PCA(n_comps=2)
     pca_model.fit(sample_data)  # Assuming the PCA class has a fit method that sets necessary attributes
 
     # Action
     predictions = pca_model.predict(sample_data.iloc[[anomalous_observation]])
 
     # Verification
-    assert predictions['anomaly_level_hotelling'] > predictions['control_limit_hotelling'], "Anomaly detected"
-    assert predictions['anomaly_level_spe'] > predictions['control_limit_spe'], "Anomaly detected"
+    assert predictions['anomaly_level_hotelling'][0] > predictions['control_limit_hotelling'], "Anomaly detected"
+    assert predictions['anomaly_level_spe'][0] > predictions['control_limit_spe'], "Anomaly detected"

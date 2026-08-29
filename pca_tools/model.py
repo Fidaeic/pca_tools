@@ -15,13 +15,13 @@ from .exceptions import NotDataFrameError, ModelNotFittedError, NotAListError, N
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.decomposition import PCA as PCA_sk
 from .plotting import score_plot, biplot, loadings_barplot, residuals_barplot, spe_contribution_plot, hotelling_t2_contribution_plot, actual_vs_predicted, dmodx_contribution_plot, generic_stat_plot, structural_variance_plot
-from .decorators import validate_dataframe, require_fitted, cache_result
+from .decorators import validate_dataframe, require_fitted
 from .preprocess import preprocess
 from .utils import compute_R2_matrix
 
 class PCA(BaseEstimator, TransformerMixin):
     def __init__(self, n_comps:int=None, 
-                 numerical_features:list=[], 
+                 numerical_features:list | None=None,
                  standardize:bool=True, 
                  tolerance:float=1e-4, 
                  alpha:float=.99) -> None:
@@ -32,13 +32,15 @@ class PCA(BaseEstimator, TransformerMixin):
         if not 0 < alpha < 1:
             raise ValueError('Alpha must be strictly between 0 and 1')
 
-        if not isinstance(numerical_features, list):
+        if numerical_features is not None and not isinstance(numerical_features, list):
             raise NotAListError(type(numerical_features).__name__)
         
         self._standardize = standardize
         self._tolerance = tolerance
         self._ncomps = n_comps
-        self._numerical_features = numerical_features
+        # ``None`` avoids a shared mutable default while preserving sklearn's
+        # constructor/clone contract: supplied parameters are stored unchanged.
+        self._numerical_features = numerical_features if numerical_features is not None else []
         self._alpha = alpha
         self.model = PCA_sk(n_components=self._ncomps, svd_solver='full', tol=self._tolerance, iterated_power='auto')
 
@@ -56,8 +58,29 @@ class PCA(BaseEstimator, TransformerMixin):
         }
     
     def set_params(self, **params):
+        valid_params = self.get_params(deep=True)
         for key, value in params.items():
-            setattr(self, key, value)
+            if key not in valid_params:
+                raise ValueError(f"Invalid parameter {key!r} for PCA.")
+            if key == 'n_comps':
+                self._ncomps = value
+            elif key == 'numerical_features':
+                if value is not None and not isinstance(value, list):
+                    raise NotAListError(type(value).__name__)
+                self._numerical_features = value if value is not None else []
+            elif key == 'standardize':
+                self._standardize = value
+            elif key == 'tolerance':
+                self._tolerance = value
+            elif key == 'alpha':
+                self._alpha = value
+
+        self.model = PCA_sk(n_components=self._ncomps, svd_solver='full',
+                            tol=self._tolerance, iterated_power='auto')
+        self._scaler = Pipeline([('scaler', StandardScaler())])
+        for attribute in ('_scores', '_control_limits_cache'):
+            if hasattr(self, attribute):
+                delattr(self, attribute)
         return self
     
     def get_rsquared_acc(self):
@@ -78,8 +101,23 @@ class PCA(BaseEstimator, TransformerMixin):
         if self._ncomps is None:
             self._ncomps = data.shape[1]
 
-        if self._ncomps <= 0 or self._ncomps > data.shape[1]:
-            raise NComponentsError(data.shape[1])
+        max_components = min(data.shape)
+        if self._ncomps <= 0 or self._ncomps > max_components:
+            raise NComponentsError(max_components)
+
+    def _validate_feature_schema(self, data: pd.DataFrame) -> None:
+        """Require the exact feature schema learned during fitting."""
+        if not data.columns.equals(self._variables):
+            missing = self._variables.difference(data.columns).tolist()
+            unexpected = data.columns.difference(self._variables).tolist()
+            raise ValueError(
+                "Input features must match the fitted feature names and order. "
+                f"Missing: {missing}; unexpected: {unexpected}."
+            )
+        if not all(pd.api.types.is_numeric_dtype(data[column]) for column in data.columns):
+            raise TypeError("PCA monitoring data must contain only numeric features.")
+        if not np.isfinite(data.to_numpy(dtype=float)).all():
+            raise ValueError("PCA monitoring data must not contain missing or infinite values; impute first.")
 
     @validate_dataframe('data')
     def _initialize_attributes(self, data: pd.DataFrame):
@@ -264,6 +302,7 @@ class PCA(BaseEstimator, TransformerMixin):
         '''
         self._validate_ncomps(data)
         self._initialize_attributes(data)
+        self._validate_feature_schema(data)
         X = self._preprocess_data(data)
         self._fit_model(X)
         self._calculate_metrics(data)
@@ -298,6 +337,7 @@ class PCA(BaseEstimator, TransformerMixin):
         - The transformation process involves centering and scaling the data (if standardization was applied during fitting) before projecting it onto the PCA space using the loadings matrix derived during fitting.
         - The returned DataFrame retains the original index of the input `data`, facilitating easy tracking of samples.
         '''
+        self._validate_feature_schema(data)
         X_transform = data.copy()
         # Descale and demean matrix
         if self._standardize:
@@ -329,8 +369,7 @@ class PCA(BaseEstimator, TransformerMixin):
         - The method combines fitting and transformation into a single step, which is particularly useful for pipeline integrations where model fitting and data transformation are performed sequentially.
         - The number of principal components (`n_components`) retained can be specified during the model initialization. If not specified, it defaults to the lesser of the number of samples or features in `data`.
         '''
-        self.train(data)
-        return self.transform(data)
+        return self.fit(data, y=y).transform(data)
 
     @require_fitted
     @validate_dataframe('data')
@@ -354,6 +393,9 @@ class PCA(BaseEstimator, TransformerMixin):
         -----
         - This operation is the inverse of the PCA transformation, but it may not perfectly reconstruct the original data if the PCA transformation was lossy (i.e., if some components were discarded).
         '''
+        if not data.columns.equals(self._scores.columns):
+            raise ValueError("Input scores must match the fitted component names and order.")
+
         # Reconstruct in the scaled space via PCA loadings multiplication.
         # Ensure data is converted to NumPy array for multiplication.
         projection = data.values @ self._loadings.values.T
@@ -378,7 +420,6 @@ class PCA(BaseEstimator, TransformerMixin):
 
         return pd.DataFrame(result, columns=self._variables, index=data.index)
     
-    @cache_result
     @require_fitted
     def control_limits(self, alpha: float = 0.95) -> tuple[float, float, float]:
         """

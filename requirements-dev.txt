@@ -1,0 +1,2 @@
+# Install the local package with its test and release tooling.
+-e .[dev]

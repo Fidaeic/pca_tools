@@ -1,15 +1,5 @@
 import numpy as np
 from scipy.stats import f, beta, chi2
-import copy
-import pandas as pd
-import logging
-import altair as alt
-from numpy import linalg as LA
-import pdb
-from numba import jit
-import functools
-import pandas as pd
-from .exceptions import NotDataFrameError, ModelNotFittedError
 from sklearn.decomposition import PCA as PCA_sk
 from sklearn.preprocessing import StandardScaler
 
